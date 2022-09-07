@@ -30,18 +30,12 @@ class SSHPacketizer(Packetizer):
 			else:
 				self.__total_size = -1
 		else:
-			print(len(self.in_buffer))
-			print(self.server_to_client_enc.blocksize)
 			if len(self.in_buffer) >= self.server_to_client_enc.blocksize:
-				print('decrypting header...')
 				self.__encrypted_header = self.in_buffer[:self.server_to_client_enc.blocksize]
 				self.__decrypted_header = self.server_to_client_enc.decrypt(self.__encrypted_header)
-				print('self.__decrypted_header: %s' % self.__decrypted_header)
 				self.__total_size = int.from_bytes(self.__decrypted_header[0:4], byteorder='big', signed = False) + 4
-				print('dec total size: %s' % self.__total_size)
 				if self.server_to_client_mac is not None:
 					self.__total_size += self.server_to_client_mac.blocksize
-				print('dec final total size: %s' % self.__total_size)
 			else:
 				self.__total_size = -1
 	
@@ -60,9 +54,9 @@ class SSHPacketizer(Packetizer):
 			decdata = self.__decrypted_header + decdata
 
 			if self.server_to_client_mac is not None:
-				print(data)
 				res = self.server_to_client_mac.verify(decdata, macdata, self.server_to_client_sequence_number)
-				print('verify: %s' % res)
+				if res is False:
+					raise Exception('Incorrect MAC!')
 			
 			padsize = decdata[4]
 			payload = decdata[5:-padsize]
@@ -72,23 +66,19 @@ class SSHPacketizer(Packetizer):
 				payload = self.server_to_client_compression.decompress(payload)
 			self.__decrypted_header = None
 			self.__encrypted_header = None
-			print(payload)
 			return payload
 
 	
 	def process_buffer(self):
-		print('__total_size: %s' % self.__total_size)
 		if self.__total_size == -1:
 			self.calc_packet_size()
 
 		while self.__total_size > -1 and len(self.in_buffer) >= self.__total_size:
 			if self.__total_size > -1 and len(self.in_buffer) >= self.__total_size:
 				payload = self.get_payload(self.in_buffer[:self.__total_size])
-				print(payload)
 				self.in_buffer = self.in_buffer[self.__total_size:]
 				self.calc_packet_size()
 
-				print('[SSH] incoming MSG data: %s' % payload)
 				self.server_to_client_sequence_number = (self.server_to_client_sequence_number + 1) & 0xffffffff
 				yield payload
 
@@ -103,7 +93,6 @@ class SSHPacketizer(Packetizer):
 			self.client_to_server_sequence_number = (self.client_to_server_sequence_number+1) & 0xffffffff
 			yield packet_length.to_bytes(4, byteorder="big", signed = False) + len(random_padding).to_bytes(1, byteorder="big", signed = False) + payload + random_padding
 		else:
-			print('[SSH] Payload before encryption: %s' % payload)
 			align = self.client_to_server_enc.blocksize
 			if self.client_to_server_compression is not None:
 				payload = self.client_to_server_compression.compress(payload)
@@ -119,7 +108,6 @@ class SSHPacketizer(Packetizer):
 			
 			if self.client_to_server_mac is not None:
 				macdata = self.client_to_server_mac.digest(packet, self.client_to_server_sequence_number)
-				print('macdata :%s' % macdata.hex())
 			
 			packet = self.client_to_server_enc.encrypt(packet)
 			self.client_to_server_sequence_number = (self.client_to_server_sequence_number+1) & 0xffffffff

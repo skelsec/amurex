@@ -13,11 +13,12 @@ class SSHMACAlgo:
 	def verify(self, msg:bytes, macdata:bytes, sequence_no:int) -> bool:
 		raise NotImplementedError()
 
+from typing import Dict
 from amurex.crypto.mac.hmacsha1 import SSHMACHMACSHA1
 from amurex.crypto.mac.hmacsha256 import SSHMACHMACSHA256
 from amurex.crypto.mac.hmacsha512 import SSHMACHMACSHA512
 
-AMUREX_MAC_ALGORITHMS = {
+AMUREX_MAC_ALGORITHMS: Dict[str, SSHMACAlgo] = {
 	'hmac-sha2-512' : SSHMACHMACSHA512,
 	'hmac-sha2-256' : SSHMACHMACSHA256,
 	'hmac-sha1': SSHMACHMACSHA1,

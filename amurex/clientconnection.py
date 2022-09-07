@@ -2,6 +2,7 @@ import copy
 import asyncio
 import traceback
 from typing import Dict
+from amurex import logger
 from amurex.protocol.packetizer import SSHPacketizer
 from amurex.protocol.messages import SSH_MSG_USERAUTH_REQUEST, parse_ssh_payload, SSHMessageNumber, SSH_MSG_KEXINIT, \
 	SSH_MSG_NEWKEYS, SSH_MSG_SERVICE_REQUEST, SSH_MSG_USERAUTH_REQUEST_PASSWORD
@@ -12,10 +13,10 @@ from asysocks.unicomm.common.target import UniProto, UniTarget
 
 ### will not be here!
 from amurex.crypto.compression import AMUREX_COMPRESSION_ALGORITHMS
-from amurex.crypto.kex.dh import SSHKEXDH
+from amurex.crypto.kex import AMUREX_KEX_ALGORITHMS
 from amurex.crypto.mac import AMUREX_MAC_ALGORITHMS
 from amurex.crypto.encryption import AMUREX_ENCRYPTION_ALGORITHMS
-from amurex.crypto.keys.rsa import SSHKeyRSA, SSHKeyRSA512
+from amurex.crypto.keys import AMUREX_HOST_KEY_ALGORITHMS
 from amurex.channels import SSHChannel
 from amurex.channels.ptysession import SSHPTYSession
 from amurex.channels.shellsession import SSHShellSession
@@ -30,8 +31,8 @@ class SSHClientConnection:
 		self.__connection = None
 		self.__incoming_task = None
 
-		self.__kex_algorithms = [SSHKEXDH()]
-		self.__host_key_algorithms = [SSHKeyRSA(), SSHKeyRSA512()]
+		self.__kex_algorithms = []
+		self.__host_key_algorithms = []
 		self.__encryption_algorithms = []
 		self.__compression_algorithms = []
 		self.__languages = []
@@ -43,7 +44,8 @@ class SSHClientConnection:
 
 		self.__kex_algo = None
 		self.__kex_algo_name = None
-		self.__key_algo = None
+		self.__hostkey_algo = None
+		self.__hostkey_algo_name = None
 		self.__encryption_client_to_server = None
 		self.__encryption_server_to_client = None
 		self.__mac_client_to_server = None
@@ -90,7 +92,7 @@ class SSHClientConnection:
 		except Exception as e:
 			traceback.print_exc()
 
-	async def connect(self):
+	async def connect(self, noauth = False):
 		try:
 			client = UniClient(self.target, Packetizer())
 			self.__connection = await client.connect()
@@ -105,6 +107,9 @@ class SSHClientConnection:
 			if err is not None:
 				raise err
 
+			if noauth is True:
+				return True, None
+			
 			_, err = await self.authenticate()
 			if err is not None:
 				raise err
@@ -119,7 +124,6 @@ class SSHClientConnection:
 		try:
 			await self.__connection.write(self.banner)
 			self.__server_banner = await self.__connection.read_one()
-			print(self.__server_banner)
 			return True, None
 		except Exception as e:
 			return False, e
@@ -173,66 +177,44 @@ class SSHClientConnection:
 
 	async def key_exchange(self):
 		try:
-			kex_algos = []
-			for algo in self.__kex_algorithms:
-				print(algo)
-				kex_algos += algo.get_names()
-
+			self.__kex_algorithms = list(AMUREX_KEX_ALGORITHMS.keys())
+			self.__host_key_algorithms = list(AMUREX_HOST_KEY_ALGORITHMS.keys())
+			self.__encryption_algorithms = list(AMUREX_ENCRYPTION_ALGORITHMS.keys())
 			self.__encryption_algorithms = list(AMUREX_ENCRYPTION_ALGORITHMS.keys())
 			self.__mac_algorithms = list(AMUREX_MAC_ALGORITHMS.keys())
 			self.__compression_algorithms = list(AMUREX_COMPRESSION_ALGORITHMS.keys())
+			self.__languages = []
 
 			client_kex = SSH_MSG_KEXINIT(
-				kex_algos,
-				[algo.name for algo in self.__host_key_algorithms],
+				self.__kex_algorithms,
+				self.__host_key_algorithms,
 				self.__encryption_algorithms,
 				self.__encryption_algorithms,
 				self.__mac_algorithms,
 				self.__mac_algorithms,
 				self.__compression_algorithms,
 				self.__compression_algorithms,
-				[algo.name for algo in self.__languages],
-				[algo.name for algo in self.__languages],
+				self.__languages,
+				self.__languages,
 			)
 			
 			await self.__connection.write(client_kex.to_bytes())
 			server_kex_data = await self.__connection.read_one()
 			server_kex = SSH_MSG_KEXINIT.from_bytes(server_kex_data)
-			print(str(server_kex))
 
-			common_kex_algos = set(server_kex.kex_algorithms).intersection(client_kex.kex_algorithms) #
-			common_host_key_algos = set(client_kex.server_host_key_algorithms).intersection(server_kex.server_host_key_algorithms)
-			common_client_mac_algos = set(client_kex.mac_algorithms_client_to_server).intersection(server_kex.mac_algorithms_client_to_server)
-			common_server_mac_algos = set(client_kex.mac_algorithms_server_to_client).intersection(server_kex.mac_algorithms_server_to_client)
-			common_client_languages = set(client_kex.languages_client_to_server).intersection(server_kex.languages_client_to_server)
-			common_server_languages = set(client_kex.languages_server_to_client).intersection(server_kex.languages_server_to_client)
-
-			print('common_kex_algos : %s' % common_kex_algos)
-			print('common_host_key_algos : %s' % common_host_key_algos)
-			print('common_client_mac_algos : %s' % common_client_mac_algos)
-			print('common_server_mac_algos : %s' % common_server_mac_algos)
-			print('common_client_languages : %s' % common_client_languages)
-			print('common_server_languages : %s' % common_server_languages)
-
-			for commonalgo in server_kex.kex_algorithms:
-				for algo in self.__kex_algorithms:
-					for algoname in algo.get_names():
-						if algoname == commonalgo:
-							self.__kex_algo = algo
-							self.__kex_algo_name = algoname
-							break
-					else:
-						continue
-				if self.__kex_algo is None:
-					continue
-				else:
+			for algo in client_kex.kex_algorithms:
+				if algo in server_kex.kex_algorithms:
+					self.__kex_algo = AMUREX_KEX_ALGORITHMS[algo]()
+					self.__kex_algo_name = algo
 					break
 			else:
 				raise Exception('No common KEX algorithm with server!')
 			
-			for algo in self.__host_key_algorithms:
-				if algo.name in common_host_key_algos:
-					self.__key_algo = algo
+			for algo in client_kex.server_host_key_algorithms:
+				if algo in server_kex.server_host_key_algorithms:
+					# when we get to implement it...
+					#self.__hostkey_algo = AMUREX_HOST_KEY_ALGORITHMS[algo]()
+					self.__hostkey_algo_name = algo
 					break
 			else:
 				raise Exception('No common Key algorithm with server!')
@@ -281,47 +263,21 @@ class SSHClientConnection:
 			else:
 				raise Exception('No common Server-to-Client compression algorithm with server!')
 
-			for algo in self.__languages:
-				if algo.name in common_client_languages:
+			for algo in client_kex.languages_client_to_server:
+				if algo in server_kex.languages_client_to_server:
 					self.__language_client_to_server = algo
 					break
 			
-			for algo in self.__languages:
-				if algo.name in common_client_languages:
+			for algo in client_kex.languages_server_to_client:
+				if algo in client_kex.languages_server_to_client:
 					self.__language_server_to_client = algo
 					break
-			
-			self.__kex_algo = copy.deepcopy(self.__kex_algo)
-			self.__key_algo = copy.deepcopy(self.__key_algo)
-			self.__encryption_client_to_server = copy.deepcopy(self.__encryption_client_to_server)
-			self.__encryption_server_to_client = copy.deepcopy(self.__encryption_server_to_client)
-			self.__compression_client_to_server = copy.deepcopy(self.__compression_client_to_server)
-			self.__compression_server_to_client = copy.deepcopy(self.__compression_server_to_client)
-			self.__language_client_to_server = copy.deepcopy(self.__language_client_to_server)
-			self.__language_server_to_client = copy.deepcopy(self.__language_server_to_client)
 
-			print(self.__kex_algo)
-			print(self.__key_algo)
-			print(self.__encryption_client_to_server)
-			print(self.__encryption_server_to_client)
-			print(self.__mac_client_to_server)
-			print(self.__mac_server_to_client)
-			print(self.__compression_client_to_server)
-			print(self.__compression_server_to_client)
-			print(self.__language_client_to_server)
-			print(self.__language_server_to_client)
 
+			self.__kex_algo.init(self.__kex_algo_name, self.banner, self.__server_banner, client_kex, server_kex, None)
 			srv_msg = None
-			while True:
-				authmsg, is_done, err = await self.__kex_algo.authenticate(
-					self.__kex_algo_name,
-					self.banner, 
-					self.__server_banner, 
-					client_kex, 
-					server_kex,
-					None, #host_key,
-					srv_msg
-				)
+			for _ in range(255): #adding a max limit of 255 steps for KEX
+				authmsg, is_done, err = await self.__kex_algo.authenticate(srv_msg)
 				if err is not None:
 					raise err
 				if is_done is True:
@@ -339,12 +295,12 @@ class SSHClientConnection:
 			self.client_to_server_integrity_key = self.calculate_key(b'E', self.__mac_client_to_server.blocksize)
 			self.server_to_client_integrity_key = self.calculate_key(b'F', self.__mac_server_to_client.blocksize)
 			
-			print('client_to_server_init_IV       : %s' % self.client_to_server_init_IV.hex())
-			print('server_to_client_init_IV       : %s' % self.server_to_client_init_IV.hex())
-			print('client_to_server_cipher_key    : %s' % self.client_to_server_cipher_key.hex())
-			print('server_to_client_cipher_key    : %s' % self.server_to_client_cipher_key.hex())
-			print('client_to_server_integrity_key : %s' % self.client_to_server_integrity_key.hex())
-			print('server_to_client_integrity_key : %s' % self.server_to_client_integrity_key.hex())
+			logger.debug('client_to_server_init_IV       : %s' % self.client_to_server_init_IV.hex())
+			logger.debug('server_to_client_init_IV       : %s' % self.server_to_client_init_IV.hex())
+			logger.debug('client_to_server_cipher_key    : %s' % self.client_to_server_cipher_key.hex())
+			logger.debug('server_to_client_cipher_key    : %s' % self.server_to_client_cipher_key.hex())
+			logger.debug('client_to_server_integrity_key : %s' % self.client_to_server_integrity_key.hex())
+			logger.debug('server_to_client_integrity_key : %s' % self.server_to_client_integrity_key.hex())
 
 			# initializing ciphers
 			self.__encryption_client_to_server.init_keys(self.client_to_server_cipher_key, self.client_to_server_init_IV)

@@ -960,6 +960,66 @@ class SSH_MSG_CHANNEL_FAILURE:
 		return t
 
 
+class SSH_MSG_KEXECDH_INIT:
+	def __init__(self, qc):
+		self.packet_type = SSHMessageNumber.SSH2_MSG_KEXDH_INIT
+		self.qc:bytes = qc
+
+	@staticmethod
+	def from_bytes(data):
+		return SSH_MSG_KEXECDH_INIT.from_buffer(io.BytesIO(data))
+
+	@staticmethod
+	def from_buffer(buff):
+		packet_type = SSHMessageNumber(buff.read(1)[0])
+		qc = SSHString.from_buff(buff)
+		return SSH_MSG_KEXECDH_INIT(qc)
+
+	def to_bytes(self):
+		data = b''
+		data += self.packet_type.value.to_bytes(1, byteorder = 'big', signed = False)
+		data += SSHString.to_bytes(self.qc)
+		return data
+
+	def __str__(self):
+		t = ''
+		for k in self.__dict__:
+			t += '%s : %s\r\n' % (k, self.__dict__[k])
+		return t
+
+class SSH_MSG_KEXECDH_REPLY:
+	def __init__(self, ks, qs, sigs):
+		self.packet_type = SSHMessageNumber.SSH2_MSG_KEXDH_REPLY
+		self.ks:bytes = ks
+		self.qs:bytes = qs
+		self.sigs:bytes = sigs
+
+	@staticmethod
+	def from_bytes(data):
+		return SSH_MSG_KEXECDH_REPLY.from_buffer(io.BytesIO(data))
+
+	@staticmethod
+	def from_buffer(buff):
+		packet_type = SSHMessageNumber(buff.read(1)[0])
+		ks = SSHString.from_buff(buff)
+		qs = SSHString.from_buff(buff)
+		sigs = SSHString.from_buff(buff)
+
+		return SSH_MSG_KEXECDH_REPLY(ks, qs, sigs)
+
+	def to_bytes(self):
+		data = b''
+		data += self.packet_type.value.to_bytes(1, byteorder = 'big', signed = False)
+		data += SSHString.to_bytes(self.ks)
+		data += SSHString.to_bytes(self.qs)
+		data += SSHString.to_bytes(self.sigs)
+		return data
+
+	def __str__(self):
+		t = ''
+		for k in self.__dict__:
+			t += '%s : %s\r\n' % (k, self.__dict__[k])
+		return t
 
 ssh_payload_type_lookup = {
 	SSHMessageNumber.SSH_MSG_DISCONNECT : None,

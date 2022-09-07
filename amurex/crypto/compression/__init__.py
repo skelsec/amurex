@@ -9,11 +9,12 @@ class SSHCompression:
 	def decompress(self, data:bytes) -> bytes:
 		return data
 
+from typing import Dict
 from amurex.crypto.compression.none import SSHCompressionNone
 from amurex.crypto.compression.compzlib import SSHCompressionZLIB
 
 
-AMUREX_COMPRESSION_ALGORITHMS = {
+AMUREX_COMPRESSION_ALGORITHMS:Dict[str, SSHCompression] = {
 	'zlib' : SSHCompressionZLIB,
 	'none' : SSHCompressionNone,
 }
