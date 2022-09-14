@@ -40,7 +40,8 @@ class SSHKEXNISTBase(SSHKEXAlgo):
 
 			if self.__iteration == 1:
 				smsg = SSH_MSG_KEXECDH_REPLY.from_bytes(server_msg)
-				smsg.ks
+				self.certificate = smsg.ks
+				self.signature = smsg.sigs
 				
 				self.__qs = ec.EllipticCurvePublicKey.from_encoded_point(self.curve, smsg.qs)
 				K = self.key.exchange(ec.ECDH(), self.__qs)
@@ -57,7 +58,6 @@ class SSHKEXNISTBase(SSHKEXAlgo):
 
 				self.exchange_hash = self.hashobj(to_hash).digest()
 				return None, True, None
-
 
 		except Exception as e:
 			return None, True, e

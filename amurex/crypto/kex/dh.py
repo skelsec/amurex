@@ -16,6 +16,7 @@ from amurex.protocol.messages import SSH2_MSG_KEXDH_INIT, SSH2_MSG_KEXDH_REPLY, 
 
 # https://www.ietf.org/rfc/rfc4419.txt
 # https://datatracker.ietf.org/doc/html/rfc4253
+# https://www.rfc-editor.org/rfc/rfc4419
 
 class SSHKEXDH(SSHKEXAlgo):
 	def __init__(self):
@@ -63,8 +64,7 @@ class SSHKEXDH(SSHKEXAlgo):
 				self.__iteration = 1
 				self.p = int.from_bytes(DHPRIMES[self.gid], byteorder='big', signed=False)
 				self.g = 2
-				print(self.p.bit_length()//8)
-				self.x = int.from_bytes(os.urandom(8), byteorder='big', signed=False)
+				self.x = int.from_bytes(os.urandom(128), byteorder='big', signed=False)
 				self.e = pow(self.g,self.x,self.p)
 
 				msg = SSH2_MSG_KEXDH_INIT(self.e)
@@ -74,7 +74,10 @@ class SSHKEXDH(SSHKEXAlgo):
 				if server_msg is None:
 					raise Exception('Server message is empty?!')
 				
-				smsg = SSH2_MSG_KEXDH_REPLY.from_bytes(server_msg)				
+				smsg = SSH2_MSG_KEXDH_REPLY.from_bytes(server_msg)
+				self.certificate = smsg.pubkey_string
+				self.signature = smsg.h_sig
+
 				K = pow(smsg.f, self.x, self.p)
 				self.shared_secret = SSHString.to_bytes(deflate_long(K))
 

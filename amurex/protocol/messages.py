@@ -65,7 +65,8 @@ class SSHString:
 		
 	@staticmethod
 	def to_bytes(s):
-		if not s:
+		if s is None:
+			print('NOTS!!!! %s' % repr(s))
 			return b''
 		data = s
 		if isinstance(s, str):
@@ -264,7 +265,7 @@ class SSH2_MSG_KEXDH_REPLY:
 		msg.packet_type = SSHMessageNumber(buff.read(1)[0])
 		msg.pubkey_string = SSHString.from_buff(buff)
 		msg.f = inflate_long(SSHString.from_buff(buff))
-		msg.h_sig = inflate_long(SSHString.from_buff(buff))
+		msg.h_sig = SSHString.from_buff(buff)
 		return msg
 		
 	def to_bytes(self):
@@ -880,7 +881,6 @@ class SSH_MSG_CHANNEL_CLOSE:
 		self.packet_type = SSHMessageNumber.SSH_MSG_CHANNEL_CLOSE
 		self.recipient:int = recipient
 
-
 	@staticmethod
 	def from_bytes(data):
 		return SSH_MSG_CHANNEL_CLOSE.from_buffer(io.BytesIO(data))
@@ -1004,7 +1004,6 @@ class SSH_MSG_KEXECDH_REPLY:
 		ks = SSHString.from_buff(buff)
 		qs = SSHString.from_buff(buff)
 		sigs = SSHString.from_buff(buff)
-
 		return SSH_MSG_KEXECDH_REPLY(ks, qs, sigs)
 
 	def to_bytes(self):
@@ -1040,7 +1039,7 @@ ssh_payload_type_lookup = {
 	SSHMessageNumber.SSH_MSG_GLOBAL_REQUEST: SSH_MSG_GLOBAL_REQUEST,
 	SSHMessageNumber.SSH_MSG_CHANNEL_OPEN:SSH_MSG_CHANNEL_OPEN,
 	SSHMessageNumber.SSH_MSG_CHANNEL_OPEN_CONFIRMATION:SSH_MSG_CHANNEL_OPEN_CONFIRMATION,
-	SSHMessageNumber.SSH_MSG_CHANNEL_FAILURE:SSH_MSG_CHANNEL_OPEN_FAILURE,
+	SSHMessageNumber.SSH_MSG_CHANNEL_OPEN_FAILURE:SSH_MSG_CHANNEL_OPEN_FAILURE,
 	SSHMessageNumber.SSH_MSG_CHANNEL_WINDOW_ADJUST:SSH_MSG_CHANNEL_WINDOW_ADJUST,
 	SSHMessageNumber.SSH_MSG_CHANNEL_DATA:SSH_MSG_CHANNEL_DATA,
 	SSHMessageNumber.SSH_MSG_CHANNEL_EXTENDED_DATA:SSH_MSG_CHANNEL_EXTENDED_DATA,

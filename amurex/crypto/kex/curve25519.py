@@ -5,7 +5,6 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey,
     X25519PublicKey,
 )
-import traceback
 from amurex.crypto.kex import SSHKEXAlgo
 from amurex.protocol.messages import SSH_MSG_KEXECDH_INIT, SSH_MSG_KEXECDH_REPLY, SSHString
 from hmac import compare_digest
@@ -40,6 +39,8 @@ class SSHKEXCurve25519(SSHKEXAlgo):
 
 			if self.__iteration == 1:
 				smsg = SSH_MSG_KEXECDH_REPLY.from_bytes(server_msg)
+				self.certificate = smsg.ks
+				self.signature = smsg.sigs
 				srvkey = X25519PublicKey.from_public_bytes(smsg.qs)
 				secret = self.key.exchange(srvkey)
 				if compare_digest(secret, b'\x00'*32):

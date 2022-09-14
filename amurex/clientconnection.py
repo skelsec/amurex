@@ -11,7 +11,6 @@ from asysocks.unicomm.common.packetizers import Packetizer
 from asysocks.unicomm.client import UniClient
 from asysocks.unicomm.common.target import UniProto, UniTarget
 
-### will not be here!
 from amurex.crypto.compression import AMUREX_COMPRESSION_ALGORITHMS
 from amurex.crypto.kex import AMUREX_KEX_ALGORITHMS
 from amurex.crypto.mac import AMUREX_MAC_ALGORITHMS
@@ -21,7 +20,9 @@ from amurex.channels import SSHChannel
 from amurex.channels.ptysession import SSHPTYSession
 from amurex.channels.shellsession import SSHShellSession
 from amurex.channels.execsession import SSHExecSession
-
+from amurex.channels.pflocal import SSHLocalPortForward
+from amurex.extras.socks import SSHPortfowardDynamicSOCKS
+from amurex.extras.pfsocket import SSHPortfowardLocalSocket
 
 class SSHClientConnection:
 	def __init__(self, credential, target:UniTarget):
@@ -61,13 +62,20 @@ class SSHClientConnection:
 		self.server_to_client_cipher_key = None
 		self.client_to_server_integrity_key = None
 		self.server_to_client_integrity_key = None
+		self.session_id = None
+	
+	async def close(self):
+		if self.__incoming_task is not None:
+			self.__incoming_task.cancel()
+		for channel in self.__channels:
+			await self.__channels[channel].close()
+		
 
 	async def __handle_in(self):
 		try:
 			async for payload in self.__connection.read():
 				msgtype, smsg = parse_ssh_payload(payload, None)
 				print('INCOMING msgtype: %s' % msgtype)
-				print('message msgtype: %s' % str(smsg))
 				if msgtype == SSHMessageNumber.SSH_MSG_GLOBAL_REQUEST:
 					_, err = await self.__process_global_request(smsg)
 					if err is not None:
@@ -81,16 +89,28 @@ class SSHClientConnection:
 							SSHMessageNumber.SSH_MSG_CHANNEL_EOF,
 							SSHMessageNumber.SSH_MSG_CHANNEL_CLOSE,
 							SSHMessageNumber.SSH_MSG_CHANNEL_OPEN,
-							SSHMessageNumber.SSH_MSG_CHANNEL_OPEN_FAILURE,
-							SSHMessageNumber.SSH_MSG_CHANNEL_OPEN_CONFIRMATION,
 						]:
 					if smsg.recipient not in self.__channels:
 						print('Missing recipientid "%s"' % smsg.recipient)
 						continue
 					await self.__channels[smsg.recipient].msg_in(msgtype, smsg)
+				elif msgtype == SSHMessageNumber.SSH_MSG_IGNORE:
+					continue
+				elif msgtype == SSHMessageNumber.SSH_MSG_DEBUG:
+					continue
+				elif msgtype == SSHMessageNumber.SSH_MSG_DISCONNECT:
+					logger.debug('Server is terminating the connection!')
+					return
+				elif msgtype == SSHMessageNumber.SSH_MSG_KEXINIT:
+					logger.debug('Server wants a rekey! TODO!!!1')
+				else:
+					logger.debug('Unknown message type recieved: %s' % msgtype)
+
 
 		except Exception as e:
 			traceback.print_exc()
+		finally:
+			await self.close()
 
 	async def connect(self, noauth = False):
 		try:
@@ -133,8 +153,7 @@ class SSHClientConnection:
 			raise ValueError('keyid must be 1 bytes long in the range of ABCDEF')
 		K = self.__kex_algo.shared_secret
 		H = self.__kex_algo.exchange_hash
-		session_id = self.__kex_algo.exchange_hash
-		result = self.__kex_algo.hashobj(K + H + keyid + session_id).digest()
+		result = self.__kex_algo.hashobj(K + H + keyid + self.session_id).digest()
 		while len(result) < keysize:
 			result += self.__kex_algo.hashobj(K + H + result).digest()
 		return result[:keysize]
@@ -175,6 +194,36 @@ class SSHClientConnection:
 			traceback.print_exc()
 			return False, e
 
+	async def portforward_local_queue(self, raddr:str, rport:int, laddr:str="", lport:int = 0):
+		try:
+			pfo = SSHLocalPortForward(None, raddr, rport, laddr, lport)
+			await self.open_channel_obj(pfo)
+			_, err = await pfo.setup_queue()
+			if err is not None:
+				raise err
+			return pfo, None
+		except Exception as e:
+			traceback.print_exc()
+			return False, e
+	
+	async def portforward_local(self, raddr:str, rport:int, laddr:str="", lport:int = 0):
+		try:
+			dfo = SSHPortfowardLocalSocket(raddr, rport, laddr, lport, self)
+			await dfo.run()
+		except Exception as e:
+			traceback.print_exc()
+			return False, e
+
+	
+	async def portforward_dynamic(self, lport:int, laddr:str=''):
+		try:
+			dfo = SSHPortfowardDynamicSOCKS(laddr, lport, self)
+			await dfo.run()
+		except Exception as e:
+			traceback.print_exc()
+			return False, e
+
+
 	async def key_exchange(self):
 		try:
 			self.__kex_algorithms = list(AMUREX_KEX_ALGORITHMS.keys())
@@ -213,7 +262,7 @@ class SSHClientConnection:
 			for algo in client_kex.server_host_key_algorithms:
 				if algo in server_kex.server_host_key_algorithms:
 					# when we get to implement it...
-					#self.__hostkey_algo = AMUREX_HOST_KEY_ALGORITHMS[algo]()
+					self.__hostkey_algo = AMUREX_HOST_KEY_ALGORITHMS[algo]()
 					self.__hostkey_algo_name = algo
 					break
 			else:
@@ -288,6 +337,15 @@ class SSHClientConnection:
 
 			
 			# calculating keys
+			if self.session_id is None:
+				# for rekeying purposes the sessionid is the same as before!
+				self.session_id = self.__kex_algo.exchange_hash
+
+			self.__hostkey_algo = self.__hostkey_algo.from_bytes(self.__kex_algo.certificate)
+			res = self.__hostkey_algo.verify_server_signature(self.__kex_algo.signature, self.__kex_algo.exchange_hash)
+			if res is not True:
+				raise Exception('Server fingerprint error!')
+
 			self.client_to_server_init_IV       = self.calculate_key(b'A', self.__encryption_client_to_server.ivsize)
 			self.server_to_client_init_IV       = self.calculate_key(b'B', self.__encryption_server_to_client.ivsize)
 			self.client_to_server_cipher_key    = self.calculate_key(b'C', self.__encryption_client_to_server.keysize)
@@ -398,18 +456,24 @@ class SSHClientConnection:
 		
 
 async def amain():
+	from amurex.crypto.knownhosts import KnownHosts
 	target = UniTarget(
 		'127.0.0.1',
 		22,
 		UniProto.CLIENT_TCP
 	)
 
+	#kf = KnownHosts.from_file('/home/webdev/.ssh/known_hosts')
+	#kf.get_pubkey_for_addr('127.0.0.1', 'ssh-ed25519')
+	#return
 	sshcli = SSHClientConnection(None, target)
 	_, err = await sshcli.connect()
 	if err is not None:
 		raise err
 	print('Connect Done!')
-	await sshcli.open_channel('shell')
+	#await sshcli.open_channel('shell')
+	#await sshcli.portforward_dynamic(8080)
+	await sshcli.portforward_local('google.com', 80, '', 8080)
 	while True:
 		await asyncio.sleep(10)
 
