@@ -6,35 +6,44 @@ from amurex.protocol.messages import SSH_MSG_CHANNEL_OPEN, SSHString, parse_ssh_
 	SSH_MSG_CHANNEL_OPEN_CONFIRMATION, SSH_MSG_CHANNEL_OPEN_FAILURE, SSH_MSG_CHANNEL_WINDOW_ADJUST,\
 		SSH_MSG_CHANNEL_DATA, SSH_MSG_CHANNEL_EXTENDED_DATA
 
-
 class SSHShellSession(SSHChannel):
-	def __init__(self, recipientid):
+	def __init__(self, recipientid, encoding='utf-8'):
 		SSHChannel.__init__(self, 'session', recipientid, 0x200000, 0x8000)
+		self.reader_task = None
+		self.encoding = encoding
+		self.stdin = asyncio.Queue()
+		self.stdout = asyncio.Queue()
+		self.stderr = asyncio.Queue()
+	
+	def decode_data(self, data:bytes):
+		if self.encoding is None or self.encoding == '' or self.encoding.lower() == 'raw':
+			return data
+		return data.decode(self.encoding)
+	
+
+	async def close(self):
+		if self.reader_task is not None:
+			self.reader_task.cancel()
+		self.stderr.put_nowait(b'')
+		self.stdout.put_nowait(b'')
+		await self.channel_close()
+
+	async def __handle_in(self):
+		while True:
+			data = await self.stdin.get()
+			if isinstance(data, bytes) is False:
+				data = data.encode()
+			await self.data_out(data, None, skip_windowcheck=True)
 	
 	async def channel_opened(self, msg:SSH_MSG_CHANNEL_OPEN_CONFIRMATION):
 		try:
-			print('Channel opened!')
-			data = b''
-			await asyncio.sleep(5)
-			print('Sending request!')
-			await self.channel_request('shell', True, data)
-			await asyncio.sleep(5)
-			print('Sending command...')
-			await self.data_out(b'ls -la\n')
-
+			self.reader_task = asyncio.create_task(self.__handle_in())
+			await self.channel_request('shell', True, b'')
 		except Exception as e:
 			traceback.print_exc()
-	
-
-	async def channel_success(self):
-		try:
-			print('Channel setup done!')
-			
-		except Exception as e:
-			traceback.print_exc()
-	
-	async def channel_failure(self):
-		print('Channel setup error!')
 
 	async def data_in(self, datatype:int, data:bytes):
-		print(data)
+		if datatype is None:
+			await self.stdout.put(self.decode_data(data))
+		else:
+			await self.stdout.put(self.decode_data(data))

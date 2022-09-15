@@ -46,6 +46,7 @@ class SSHKEXCurve25519(SSHKEXAlgo):
 				if compare_digest(secret, b'\x00'*32):
 					raise Exception('Key echange failed!')
 				
+				self.shared_secret_bytes = secret
 				self.shared_secret = SSHString.to_bytes(deflate_long(int.from_bytes(secret, byteorder='big', signed=False)))
 				to_hash =   SSHString.to_bytes(self.client_banner.strip())+\
 							SSHString.to_bytes(self.server_banner.strip())+\

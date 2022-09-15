@@ -8,29 +8,33 @@ from amurex.protocol.messages import SSH_MSG_CHANNEL_OPEN, SSHString, parse_ssh_
 
 
 class SSHExecSession(SSHChannel):
-	def __init__(self, recipientid):
+	def __init__(self, recipientid, command, encoding='utf-8'):
 		SSHChannel.__init__(self, 'session', recipientid, 0x200000, 0x8000)
+		self.command = command
+		if isinstance(command, str):
+			self.command = command.encode()
+		self.encoding = encoding
+		self.stdout = asyncio.Queue()
+		self.stderr = asyncio.Queue()
+
+	def decode_data(self, data:bytes):
+		if self.encoding is None or self.encoding == '' or self.encoding.lower() == 'raw':
+			return data
+		return data.decode(self.encoding)
 	
+	async def close(self):
+		self.stderr.put_nowait(b'')
+		self.stdout.put_nowait(b'')
+		await self.channel_close()
+
 	async def channel_opened(self, msg:SSH_MSG_CHANNEL_OPEN_CONFIRMATION):
 		try:
-			print('Channel opened!')
-			data = b'ls -la'
-			await self.channel_request('exec', True, data)
-			await self.write_eof()
+			await self.channel_request('exec', True, self.command)
 		except Exception as e:
 			traceback.print_exc()
-	
-
-	async def channel_success(self):
-		try:
-			print('Channel setup done!')
-			
-		except Exception as e:
-			traceback.print_exc()
-	
-	async def channel_failure(self):
-		print('Channel setup error!')
 
 	async def data_in(self, datatype:int, data:bytes):
-		data = data.decode()
-		print(data)
+		if datatype is None:
+			await self.stdout.put(self.decode_data(data))
+		else:
+			await self.stderr.put(self.decode_data(data))

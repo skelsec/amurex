@@ -37,8 +37,6 @@ class SSHChannel:
 				msg = typing.cast(SSH_MSG_CHANNEL_OPEN_CONFIRMATION, msg)
 				self.windowsize_server = msg.windowsize
 				self.packetsize_server = msg.packetsize
-				print('windowsize_server: %s' % self.windowsize_server)
-				print('packetsize_server: %s' % self.packetsize_server)
 				self.senderid = msg.sender
 				self.channel_opened_evt.set()
 				await self.channel_opened(msg)
@@ -107,15 +105,14 @@ class SSHChannel:
 		req = SSH_MSG_CHANNEL_WINDOW_ADJUST(self.senderid, size)
 		await self.connection.write(req.to_bytes())
 
-	async def data_out(self, data:bytes, datatype:int = None):
+	async def data_out(self, data:bytes, datatype:int = None, skip_windowcheck = False):
 		try:
-			print('data_out: %s' % data)
-			while self.windowsize_server < len(data):
-				print('WAITING')
-				await self.windowsize_server_updated.wait()
-				self.windowsize_server_updated.clear()
-
-			self.windowsize_server -= len(data)
+			if skip_windowcheck is False:
+				while self.windowsize_server < len(data):
+					await self.windowsize_server_updated.wait()
+					self.windowsize_server_updated.clear()
+				
+				self.windowsize_server -= len(data)
 			
 			data_to_send = []
 			if len(data) >= (self.packetsize_server - 0x100):
@@ -136,7 +133,6 @@ class SSHChannel:
 	
 	async def channel_request(self, request:str, wantreply:bool=True, data:bytes=b''):
 		req = SSH_MSG_CHANNEL_REQUEST(self.senderid, request, wantreply, data)
-		print(str(req))
 		await self.connection.write(req.to_bytes())
 
 	async def write_eof(self):

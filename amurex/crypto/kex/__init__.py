@@ -23,9 +23,9 @@ from amurex.crypto.kex.nistp521 import SSHKEXNISTP521
 
 
 AMUREX_KEX_ALGORITHMS:Dict[str, SSHKEXAlgo] = {
-	#'curve25519-sha256@libssh.org': SSHKEXCurve25519,
-	#'curve25519-sha256': SSHKEXCurve25519,
-	'ecdh-sha2-nistp521' : SSHKEXNISTP521,
+	'curve25519-sha256@libssh.org': SSHKEXCurve25519,
+	'curve25519-sha256': SSHKEXCurve25519,
+	#'ecdh-sha2-nistp521' : SSHKEXNISTP521,
 	#'ecdh-sha2-nistp384' : SSHKEXNISTP384,
 	#'ecdh-sha2-nistp256' : SSHKEXNISTP256,
 	#'diffie-hellman-group18-sha512': SSHKEXDH,

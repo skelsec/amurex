@@ -463,8 +463,7 @@ class SSH_MSG_USERAUTH_REQUEST:
 		msg.username = SSHString.from_buff(buff)
 		msg.service_name = SSHString.from_buff(buff)
 		msg.method_name = SSHString.from_buff(buff)
-		#if msg.method_name == 'password':
-		#	msg.method = SSH_MSG_USERAUTH_REQUEST_PW_METHOD.from_buffer(buff)
+		msg.method = buff.read()
 		#TODO: the other types https://tools.ietf.org/html/rfc4252#section-6
 		return msg
 
@@ -475,7 +474,10 @@ class SSH_MSG_USERAUTH_REQUEST:
 		data += SSHString.to_bytes(self.service_name)
 		data += SSHString.to_bytes(self.method_name)
 		if self.method:
-			data += self.method.to_bytes()
+			method = self.method
+			if isinstance(self.method, bytes) is False:
+				method = self.method.to_bytes()
+			data += method
 		return data
 
 	def __str__(self):
@@ -575,7 +577,7 @@ class SSH_MSG_GLOBAL_REQUEST:
 	@staticmethod
 	def from_buffer(buff):
 		packet_type = SSHMessageNumber(buff.read(1)[0])
-		requestname = SSHString.from_buff(buff)
+		requestname = SSHString.from_buff(buff, as_string=True)
 		wantreply = bool(buff.read(1)[0])
 		data = buff.read()
 		return SSH_MSG_GLOBAL_REQUEST(requestname, wantreply, data)
@@ -1012,6 +1014,36 @@ class SSH_MSG_KEXECDH_REPLY:
 		data += SSHString.to_bytes(self.ks)
 		data += SSHString.to_bytes(self.qs)
 		data += SSHString.to_bytes(self.sigs)
+		return data
+
+	def __str__(self):
+		t = ''
+		for k in self.__dict__:
+			t += '%s : %s\r\n' % (k, self.__dict__[k])
+		return t
+
+class SSH_MSG_USERAUTH_PK_OK:
+	def __init__(self, keytype, pubkey):
+		self.packet_type = SSHMessageNumber.SSH_MSG_USERAUTH_PASSWD_CHANGEREQ #this is sooo messed up...
+		self.keytype:str = keytype
+		self.pubkey:bytes = pubkey
+	
+	@staticmethod
+	def from_bytes(data):
+		return SSH_MSG_USERAUTH_PK_OK.from_buffer(io.BytesIO(data))
+
+	@staticmethod
+	def from_buffer(buff):
+		packet_type = SSHMessageNumber(buff.read(1)[0])
+		keytype = SSHString.from_buff(buff, as_string=True)
+		pubkey = SSHString.from_buff(buff)
+		return SSH_MSG_USERAUTH_PK_OK(keytype, pubkey)
+
+	def to_bytes(self):
+		data = b''
+		data += self.packet_type.value.to_bytes(1, byteorder = 'big', signed = False)
+		data += SSHString.to_bytes(self.keytype)
+		data += SSHString.to_bytes(self.pubkey)
 		return data
 
 	def __str__(self):

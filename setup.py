@@ -33,8 +33,8 @@ setup(
 	install_requires=[
         'cryptography>=2.5',
 		'unicrypto>=0.0.9',
-		'asysocks>=0.2.0',
-		'asyauth>=0.0.1',
+		'asysocks>=0.2.2',
+		'asyauth>=0.0.3',
 		'prompt-toolkit>=3.0.20',
 	],
 	#entry_points={

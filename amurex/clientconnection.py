@@ -1,16 +1,20 @@
-import copy
 import asyncio
+import io
 import traceback
-from typing import Dict
-from amurex import logger
+from typing import Dict, List
 from amurex.protocol.packetizer import SSHPacketizer
-from amurex.protocol.messages import SSH_MSG_USERAUTH_REQUEST, parse_ssh_payload, SSHMessageNumber, SSH_MSG_KEXINIT, \
-	SSH_MSG_NEWKEYS, SSH_MSG_SERVICE_REQUEST, SSH_MSG_USERAUTH_REQUEST_PASSWORD
+from amurex.protocol.messages import SSHString, SSH_MSG_USERAUTH_REQUEST,\
+	parse_ssh_payload, SSHMessageNumber, SSH_MSG_KEXINIT, SSH_MSG_NEWKEYS,\
+	SSH_MSG_SERVICE_REQUEST, SSH_MSG_USERAUTH_REQUEST_PASSWORD,\
+	SSH_MSG_USERAUTH_PK_OK
 from asysocks.unicomm.common.packetizers import Packetizer
 
 from asysocks.unicomm.client import UniClient
 from asysocks.unicomm.common.target import UniProto, UniTarget
+from asyauth.common.credentials import UniCredential
+from asyauth.common.constants import asyauthSecret
 
+from amurex import logger
 from amurex.crypto.compression import AMUREX_COMPRESSION_ALGORITHMS
 from amurex.crypto.kex import AMUREX_KEX_ALGORITHMS
 from amurex.crypto.mac import AMUREX_MAC_ALGORITHMS
@@ -23,30 +27,26 @@ from amurex.channels.execsession import SSHExecSession
 from amurex.channels.pflocal import SSHLocalPortForward
 from amurex.extras.socks import SSHPortfowardDynamicSOCKS
 from amurex.extras.pfsocket import SSHPortfowardLocalSocket
+from amurex.common.settings import SSHClientSettings
+		
 
 class SSHClientConnection:
-	def __init__(self, credential, target:UniTarget):
+	def __init__(self, credentials:List[UniCredential], target:UniTarget, settings: SSHClientSettings):
 		self.target = target
-		self.credential = credential
-		self.__packetizer = SSHPacketizer()
+		self.credentials:List[UniCredential] = credentials
+		self.settings = settings
 		self.__connection = None
 		self.__incoming_task = None
 
-		self.__kex_algorithms = []
-		self.__host_key_algorithms = []
-		self.__encryption_algorithms = []
-		self.__compression_algorithms = []
-		self.__languages = []
 		self.__channels:Dict[int,SSHChannel] = {}
 		self.__channelid_ctr = 10
 
-		self.banner = b'SSH-2.0-AMUREX_0.1\r\n'
+		self.__client_banner = self.settings.get_banner()
 		self.__server_banner = None
 
 		self.__kex_algo = None
 		self.__kex_algo_name = None
 		self.__hostkey_algo = None
-		self.__hostkey_algo_name = None
 		self.__encryption_client_to_server = None
 		self.__encryption_server_to_client = None
 		self.__mac_client_to_server = None
@@ -63,13 +63,15 @@ class SSHClientConnection:
 		self.client_to_server_integrity_key = None
 		self.server_to_client_integrity_key = None
 		self.session_id = None
+
+		if isinstance(self.credentials, list) is False:
+			self.credentials = [self.credentials]
 	
 	async def close(self):
 		if self.__incoming_task is not None:
 			self.__incoming_task.cancel()
 		for channel in self.__channels:
 			await self.__channels[channel].close()
-		
 
 	async def __handle_in(self):
 		try:
@@ -106,7 +108,7 @@ class SSHClientConnection:
 				else:
 					logger.debug('Unknown message type recieved: %s' % msgtype)
 
-
+			print('END?')
 		except Exception as e:
 			traceback.print_exc()
 		finally:
@@ -114,35 +116,45 @@ class SSHClientConnection:
 
 	async def connect(self, noauth = False):
 		try:
+			logger.debug('Connecting to server')
 			client = UniClient(self.target, Packetizer())
 			self.__connection = await client.connect()
+			logger.debug('Connection OK')
 
+			logger.debug('Banner exchange')
 			_, err = await self.banner_exchange()
 			if err is not None:
+				logger.debug('Banner exchange FAILED')
 				raise err
+			logger.debug('Banner exchange OK')
 
 			self.__connection.change_packetizer(SSHPacketizer())
-
+			logger.debug('Key exchange')
 			_, err = await self.key_exchange()
 			if err is not None:
+				logger.debug('Key exchange FAILED')
 				raise err
+			logger.debug('Key exchange OK')
 
 			if noauth is True:
 				return True, None
 			
+			logger.debug('Authenticating to server')
 			_, err = await self.authenticate()
 			if err is not None:
 				raise err
+			logger.debug('Authentication OK')
 
 			self.__incoming_task = asyncio.create_task(self.__handle_in())
-		
+
+			logger.debug('SSH connection OK')
 			return True, None
 		except Exception as e:
 			return None, e
 
 	async def banner_exchange(self):
 		try:
-			await self.__connection.write(self.banner)
+			await self.__connection.write(self.__client_banner)
 			self.__server_banner = await self.__connection.read_one()
 			return True, None
 		except Exception as e:
@@ -166,7 +178,7 @@ class SSHClientConnection:
 			channelobj.connection = self.__connection
 			self.__channels[recipientid] = channelobj
 
-			print('Sending chennl open...')
+			print('Sending channel open...')
 			print(channelobj.get_channel_open())
 			await self.__connection.write(channelobj.get_channel_open())
 
@@ -181,18 +193,23 @@ class SSHClientConnection:
 				print('pty')
 				await self.open_channel_obj(SSHPTYSession(None))
 			elif channel_type == 'shell':
-				print('shell')
-				await self.open_channel_obj(SSHShellSession(None))
-
-			elif channel_type == 'exec':
-				print('exec')
-				await self.open_channel_obj(SSHExecSession(None))
-
-
+				shell = SSHShellSession(None)
+				await self.open_channel_obj(shell)
+				return shell
 			return True, None
 		except Exception as e:
 			traceback.print_exc()
 			return False, e
+
+	async def get_shell(self):
+		shell = SSHShellSession(None)
+		await self.open_channel_obj(shell)
+		return shell.stdin, shell.stdout, shell.stderr
+
+	async def execute_command(self, cmd):
+		execshell = SSHExecSession(None, cmd)
+		await self.open_channel_obj(execshell)
+		return None, execshell.stdout, execshell.stderr
 
 	async def portforward_local_queue(self, raddr:str, rport:int, laddr:str="", lport:int = 0):
 		try:
@@ -226,25 +243,17 @@ class SSHClientConnection:
 
 	async def key_exchange(self):
 		try:
-			self.__kex_algorithms = list(AMUREX_KEX_ALGORITHMS.keys())
-			self.__host_key_algorithms = list(AMUREX_HOST_KEY_ALGORITHMS.keys())
-			self.__encryption_algorithms = list(AMUREX_ENCRYPTION_ALGORITHMS.keys())
-			self.__encryption_algorithms = list(AMUREX_ENCRYPTION_ALGORITHMS.keys())
-			self.__mac_algorithms = list(AMUREX_MAC_ALGORITHMS.keys())
-			self.__compression_algorithms = list(AMUREX_COMPRESSION_ALGORITHMS.keys())
-			self.__languages = []
-
 			client_kex = SSH_MSG_KEXINIT(
-				self.__kex_algorithms,
-				self.__host_key_algorithms,
-				self.__encryption_algorithms,
-				self.__encryption_algorithms,
-				self.__mac_algorithms,
-				self.__mac_algorithms,
-				self.__compression_algorithms,
-				self.__compression_algorithms,
-				self.__languages,
-				self.__languages,
+				self.settings.kex_algorithms,
+				self.settings.host_key_algorithms,
+				self.settings.encryption_algorithms,
+				self.settings.encryption_algorithms,
+				self.settings.mac_algorithms,
+				self.settings.mac_algorithms,
+				self.settings.compression_algorithms,
+				self.settings.compression_algorithms,
+				self.settings.languages,
+				self.settings.languages,
 			)
 			
 			await self.__connection.write(client_kex.to_bytes())
@@ -263,7 +272,6 @@ class SSHClientConnection:
 				if algo in server_kex.server_host_key_algorithms:
 					# when we get to implement it...
 					self.__hostkey_algo = AMUREX_HOST_KEY_ALGORITHMS[algo]()
-					self.__hostkey_algo_name = algo
 					break
 			else:
 				raise Exception('No common Key algorithm with server!')
@@ -323,7 +331,7 @@ class SSHClientConnection:
 					break
 
 
-			self.__kex_algo.init(self.__kex_algo_name, self.banner, self.__server_banner, client_kex, server_kex, None)
+			self.__kex_algo.init(self.__kex_algo_name, self.__client_banner, self.__server_banner, client_kex, server_kex, None)
 			srv_msg = None
 			for _ in range(255): #adding a max limit of 255 steps for KEX
 				authmsg, is_done, err = await self.__kex_algo.authenticate(srv_msg)
@@ -341,10 +349,16 @@ class SSHClientConnection:
 				# for rekeying purposes the sessionid is the same as before!
 				self.session_id = self.__kex_algo.exchange_hash
 
-			self.__hostkey_algo = self.__hostkey_algo.from_bytes(self.__kex_algo.certificate)
-			res = self.__hostkey_algo.verify_server_signature(self.__kex_algo.signature, self.__kex_algo.exchange_hash)
-			if res is not True:
-				raise Exception('Server fingerprint error!')
+				self.__hostkey_algo.load_pubkey_bytes(self.__kex_algo.certificate)
+				server_keytype, server_pubkey = self.__hostkey_algo.to_knownhostline()
+				res = self.settings.known_hosts.verify_certificate(self.target.get_hostname_or_ip(), server_keytype, server_pubkey)
+				if res is False:
+					if self.settings.skip_hostkey_verification is not True:
+						raise Exception('Host key verification failed!')
+
+				res = self.__hostkey_algo.verify_server_signature(self.__kex_algo.signature, self.__kex_algo.exchange_hash)
+				if res is not True:
+					raise Exception('Host session signature verification failed!')
 
 			self.client_to_server_init_IV       = self.calculate_key(b'A', self.__encryption_client_to_server.ivsize)
 			self.server_to_client_init_IV       = self.calculate_key(b'B', self.__encryption_server_to_client.ivsize)
@@ -391,9 +405,7 @@ class SSHClientConnection:
 			msgtype, smsg = parse_ssh_payload(srvmsg, SSHMessageNumber.SSH_MSG_SERVICE_ACCEPT)
 
 			await self.__connection.write(SSH_MSG_USERAUTH_REQUEST('', 'ssh-userauth', 'none').to_bytes())
-			srvmsg = await self.__connection.read_one()
-			print('srvmsg: %s' % srvmsg)
-			
+			srvmsg = await self.__connection.read_one()			
 			msgtype, smsg = parse_ssh_payload(srvmsg, None)
 
 			if msgtype == SSHMessageNumber.SSH_MSG_USERAUTH_SUCCESS:
@@ -401,29 +413,86 @@ class SSHClientConnection:
 			elif msgtype == SSHMessageNumber.SSH_MSG_USERAUTH_FAILURE:
 				result = smsg.authmethods
 
-			print(result)
-
 			return result, None
 
 		except Exception as e:
-			traceback.print_exc()
 			return False, e
 
 	async def authenticate(self):
 		try:
-			_, err = await self.authenticate_password()
-			if err is not None:
-				raise err
-
+			for credential in self.credentials:
+				if credential.stype == asyauthSecret.PASSWORD:
+					res, err = await self.authenticate_password(credential.username, credential.secret)
+					if res is True:
+						break
+				elif credential.stype == asyauthSecret.SSHPRIVKEY:
+					res, err = await self.authenticate_privkey(credential)
+					if res is True:
+						break
+			else:
+				raise Exception('Authentication failed!')
+			
 			return True, None
+		except Exception as e:
+			return False, e
+
+	async def authenticate_privkey(self, credential):
+		try:
+			key = credential.build_context()
+			await self.__connection.write(SSH_MSG_SERVICE_REQUEST('ssh-userauth').to_bytes())
+			srvmsg = await self.__connection.read_one()
+			msgtype, smsg = parse_ssh_payload(srvmsg, SSHMessageNumber.SSH_MSG_SERVICE_ACCEPT)
+			initial_req = SSH_MSG_USERAUTH_REQUEST(
+				credential.username, 
+				'ssh-connection', 
+				'publickey',
+				b'\x00' + key.to_pubkeyblob()
+			).to_bytes()
+			await self.__connection.write(initial_req)
+
+			srvmsg = await self.__connection.read_one()
+			msgtype, smsg = parse_ssh_payload(srvmsg)
+			if msgtype.value != 60:
+				if msgtype == SSHMessageNumber.SSH_MSG_USERAUTH_FAILURE:
+					raise Exception('Pubkey auth failed')
+				else:
+					raise Exception('Pubkey auth failed. Server sent incorrect message %s' % msgtype.name)
+			
+			#reparsing it because the "unique" message id collides with another... :(
+			smsg = SSH_MSG_USERAUTH_PK_OK.from_bytes(srvmsg)
+			ssid = SSHString.to_bytes(self.session_id)
+			to_sign  = ssid
+			to_sign += b'\x32' #SSH_MSG_SERVICE_ACCEPT
+			to_sign += SSHString.to_bytes(credential.username)
+			to_sign += SSHString.to_bytes('ssh-connection')
+			to_sign += SSHString.to_bytes('publickey')
+			to_sign += b'\x01'
+			to_sign += key.to_pubkeyblob()
+			
+			# the signature data is the same what we want to send next except the beginning
+			# we detach the beginning and append the signature at the bottom and boom!
+			authreq = to_sign[len(ssid):] + SSHString.to_bytes(key.sign(to_sign, smsg.keytype))
+
+			await self.__connection.write(authreq)
+			srvmsg = await self.__connection.read_one()
+			msgtype, smsg = parse_ssh_payload(srvmsg)
+			if msgtype == SSHMessageNumber.SSH_MSG_USERAUTH_SUCCESS:
+				return True, None
+			elif msgtype == SSHMessageNumber.SSH_MSG_USERAUTH_FAILURE:
+				# either actually fail or more auth steps needed, but currently we don't have such 
+				# auth algos implemented, so we just fail
+				return False, Exception('User auth failed!')
+			
+			raise Exception('Unexpected server reply: %s' % msgtype)
+
+
 		except Exception as e:
 			traceback.print_exc()
 			return False, e
 
-	async def authenticate_password(self):
+	async def authenticate_password(self, username, password):
 		try:
-			username = 'webdev'
-			password = 'webdev'
+			logger.debug('Plaintext authentication started')
 			await self.__connection.write(SSH_MSG_SERVICE_REQUEST('ssh-userauth').to_bytes())
 			srvmsg = await self.__connection.read_one()
 			msgtype, smsg = parse_ssh_payload(srvmsg, SSHMessageNumber.SSH_MSG_SERVICE_ACCEPT)
@@ -431,23 +500,32 @@ class SSHClientConnection:
 			srvmsg = await self.__connection.read_one()
 			msgtype, smsg = parse_ssh_payload(srvmsg, None)
 			if msgtype == SSHMessageNumber.SSH_MSG_USERAUTH_SUCCESS:
-				print('Auth okay!')
+				logger.debug('Plaintext authentication success')
 				return True, None
 			elif msgtype == SSHMessageNumber.SSH_MSG_USERAUTH_FAILURE:
-				print('Auth failed!')
+				logger.debug('Bad username or password')
 				return False, Exception('Authentication failed!')
 			elif msgtype == SSHMessageNumber.SSH_MSG_USERAUTH_PASSWD_CHANGEREQ:
-				print('Password must be changed!')
+				# TODO
+				logger.debug('Password must be changed! This is not implemented!!!')
 				raise NotImplementedError()
 			
 			raise Exception('Unexpected message incoming! %s' % msgtype)
 		except Exception as e:
-			traceback.print_exc()
 			return False, e
 
 	async def __process_global_request(self, msg):
 		try:
-			print(msg)
+			if msg.requestname == 'hostkeys-00@openssh.com':
+				data = io.BytesIO(msg.data)
+				for _ in range(10):
+					pubkeydata = SSHString.from_buff(data)
+					if pubkeydata is None:
+						break
+					#TODO: implement this if needed
+
+			else:
+				print(msg)
 
 			return True, None
 		except Exception as e:
@@ -456,26 +534,48 @@ class SSHClientConnection:
 		
 
 async def amain():
-	from amurex.crypto.knownhosts import KnownHosts
+	async def reader(inq):
+		while True:
+			data = await inq.get()
+			print(data)
+	
+	async def get_steam_reader(pipe) -> asyncio.StreamReader:
+		loop = asyncio.get_event_loop()
+		reader = asyncio.StreamReader(loop=loop)
+		protocol = asyncio.StreamReaderProtocol(reader)
+		await loop.connect_read_pipe(lambda: protocol, pipe)
+		return reader
+
+	import sys
+	from amurex.common.credential import SSHCredentialPrivKey
+	from amurex.common.credential import SSHCredentialPassword
+	credential2 = SSHCredentialPrivKey('webdev', '/home/webdev/.ssh/id_ecdsa', password = 'alma')
 	target = UniTarget(
 		'127.0.0.1',
 		22,
 		UniProto.CLIENT_TCP
 	)
+	credential1 = SSHCredentialPassword('webdev', 'notWorkingPass?!')
+	settings = SSHClientSettings()
+	settings.known_hosts.load_file('/home/webdev/.ssh/known_hosts')
+	#settings.skip_hostkey_verification = True
 
-	#kf = KnownHosts.from_file('/home/webdev/.ssh/known_hosts')
-	#kf.get_pubkey_for_addr('127.0.0.1', 'ssh-ed25519')
-	#return
-	sshcli = SSHClientConnection(None, target)
+	sshcli = SSHClientConnection([credential1, credential2], target, settings)
 	_, err = await sshcli.connect()
 	if err is not None:
 		raise err
 	print('Connect Done!')
 	#await sshcli.open_channel('shell')
 	#await sshcli.portforward_dynamic(8080)
-	await sshcli.portforward_local('google.com', 80, '', 8080)
+	#await sshcli.portforward_local('google.com', 80, '', 8080)
+	stdin, stdout, stderr = await sshcli.get_shell()
+	x1 = asyncio.create_task(reader(stdout))
+	x2 = asyncio.create_task(reader(stderr))
+	ui = await get_steam_reader(sys.stdin)
 	while True:
-		await asyncio.sleep(10)
+		data = await ui.readline()
+		print(data)
+		await stdin.put(data)
 
 def main():
 	asyncio.run(amain())
