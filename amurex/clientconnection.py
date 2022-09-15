@@ -77,7 +77,7 @@ class SSHClientConnection:
 		try:
 			async for payload in self.__connection.read():
 				msgtype, smsg = parse_ssh_payload(payload, None)
-				print('INCOMING msgtype: %s' % msgtype)
+				#print('INCOMING msgtype: %s' % msgtype)
 				if msgtype == SSHMessageNumber.SSH_MSG_GLOBAL_REQUEST:
 					_, err = await self.__process_global_request(smsg)
 					if err is not None:
@@ -177,9 +177,6 @@ class SSHClientConnection:
 			channelobj.recipientid = recipientid
 			channelobj.connection = self.__connection
 			self.__channels[recipientid] = channelobj
-
-			print('Sending channel open...')
-			print(channelobj.get_channel_open())
 			await self.__connection.write(channelobj.get_channel_open())
 
 			return True, None

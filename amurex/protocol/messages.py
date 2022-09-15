@@ -66,7 +66,7 @@ class SSHString:
 	@staticmethod
 	def to_bytes(s):
 		if s is None:
-			print('NOTS!!!! %s' % repr(s))
+			#print('NOTS!!!! %s' % repr(s))
 			return b''
 		data = s
 		if isinstance(s, str):

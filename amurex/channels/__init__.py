@@ -32,7 +32,6 @@ class SSHChannel:
 
 	async def msg_in(self, msgtype, msg):
 		try:
-			print(msgtype)
 			if msgtype == SSHMessageNumber.SSH_MSG_CHANNEL_OPEN_CONFIRMATION:
 				msg = typing.cast(SSH_MSG_CHANNEL_OPEN_CONFIRMATION, msg)
 				self.windowsize_server = msg.windowsize
@@ -50,8 +49,6 @@ class SSHChannel:
 				msg = typing.cast(SSH_MSG_CHANNEL_WINDOW_ADJUST, msg)
 				self.windowsize += msg.extend
 				self.windowsize_server_updated.set()
-				print('windowsize: %s' % self.windowsize)
-
 
 			if msgtype == SSHMessageNumber.SSH_MSG_CHANNEL_DATA:
 				msg = typing.cast(SSH_MSG_CHANNEL_DATA, msg)
