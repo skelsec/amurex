@@ -77,19 +77,20 @@ class SSHChannel:
 		await self.channel_close()
 
 	async def channel_failed(self, msg:SSH_MSG_CHANNEL_OPEN_FAILURE):
-		print('Channel failed to open! Reason: %s, Description: %s' % (msg.reason, msg.description))
+		#print('Channel failed to open! Reason: %s, Description: %s' % (msg.reason, msg.description))
 		self.channel_closed_evt.set()
 		await self.close()
 
 	async def channel_opened(self, msg:SSH_MSG_CHANNEL_OPEN_CONFIRMATION):
-		print('Channel opened!')
+		#print('Channel opened!')
+		pass
 
 	async def channel_eof(self):
-		print('Channel EOF')
-		
+		#print('Channel EOF')
+		pass
 
 	async def channel_close(self):
-		print('Channel Close')
+		#print('Channel Close')
 		if self.channel_closed_evt.is_set():
 			return
 		self.channel_closed_evt.set()
@@ -97,6 +98,7 @@ class SSHChannel:
 
 	async def data_in(self, datatype:int, data:bytes):
 		print('!!!!!!!!!!!!!! data incoming!!!! %s' % data)
+		
 
 	async def adjust_window(self, size):
 		req = SSH_MSG_CHANNEL_WINDOW_ADJUST(self.senderid, size)

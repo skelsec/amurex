@@ -28,7 +28,7 @@ from amurex.channels.pflocal import SSHLocalPortForward
 from amurex.extras.socks import SSHPortfowardDynamicSOCKS
 from amurex.extras.pfsocket import SSHPortfowardLocalSocket
 from amurex.common.settings import SSHClientSettings
-		
+
 
 class SSHClientConnection:
 	def __init__(self, credentials:List[UniCredential], target:UniTarget, settings: SSHClientSettings):
@@ -122,13 +122,13 @@ class SSHClientConnection:
 			logger.debug('Connection OK')
 
 			logger.debug('Banner exchange')
-			_, err = await self.banner_exchange()
+			_, bufferdata, err = await self.banner_exchange()
 			if err is not None:
 				logger.debug('Banner exchange FAILED')
 				raise err
 			logger.debug('Banner exchange OK')
 
-			self.__connection.change_packetizer(SSHPacketizer())
+			self.__connection.change_packetizer(SSHPacketizer(init_buffer=bufferdata))
 			logger.debug('Key exchange')
 			_, err = await self.key_exchange()
 			if err is not None:
@@ -155,8 +155,11 @@ class SSHClientConnection:
 	async def banner_exchange(self):
 		try:
 			await self.__connection.write(self.__client_banner)
-			self.__server_banner = await self.__connection.read_one()
-			return True, None
+			rawbuffer = await self.__connection.read_one()
+			linemarker = rawbuffer.find(b'\n')
+			self.__server_banner = rawbuffer[:linemarker+1]
+			logger.debug('Server banner: %s' % self.__server_banner)
+			return True, rawbuffer[linemarker+1:], None
 		except Exception as e:
 			return False, e
 
@@ -254,9 +257,10 @@ class SSHClientConnection:
 			)
 			
 			await self.__connection.write(client_kex.to_bytes())
+			logger.debug('Reading server KEX init')
 			server_kex_data = await self.__connection.read_one()
 			server_kex = SSH_MSG_KEXINIT.from_bytes(server_kex_data)
-
+			logger.debug('Server KEX init message ok')
 			for algo in client_kex.kex_algorithms:
 				if algo in server_kex.kex_algorithms:
 					self.__kex_algo = AMUREX_KEX_ALGORITHMS[algo]()
@@ -327,7 +331,7 @@ class SSHClientConnection:
 					self.__language_server_to_client = algo
 					break
 
-
+			logger.debug('Starting KEX crypto part')
 			self.__kex_algo.init(self.__kex_algo_name, self.__client_banner, self.__server_banner, client_kex, server_kex, None)
 			srv_msg = None
 			for _ in range(255): #adding a max limit of 255 steps for KEX
@@ -482,9 +486,7 @@ class SSHClientConnection:
 			
 			raise Exception('Unexpected server reply: %s' % msgtype)
 
-
 		except Exception as e:
-			traceback.print_exc()
 			return False, e
 
 	async def authenticate_password(self, username, password):
@@ -529,53 +531,3 @@ class SSHClientConnection:
 			traceback.print_exc()
 			return False, e
 		
-
-async def amain():
-	async def reader(inq):
-		while True:
-			data = await inq.get()
-			print(data)
-	
-	async def get_steam_reader(pipe) -> asyncio.StreamReader:
-		loop = asyncio.get_event_loop()
-		reader = asyncio.StreamReader(loop=loop)
-		protocol = asyncio.StreamReaderProtocol(reader)
-		await loop.connect_read_pipe(lambda: protocol, pipe)
-		return reader
-
-	import sys
-	from amurex.common.credential import SSHCredentialPrivKey
-	from amurex.common.credential import SSHCredentialPassword
-	credential2 = SSHCredentialPrivKey('webdev', '/home/webdev/.ssh/id_ecdsa', password = 'alma')
-	target = UniTarget(
-		'127.0.0.1',
-		22,
-		UniProto.CLIENT_TCP
-	)
-	credential1 = SSHCredentialPassword('webdev', 'notWorkingPass?!')
-	settings = SSHClientSettings()
-	settings.known_hosts.load_file('/home/webdev/.ssh/known_hosts')
-	#settings.skip_hostkey_verification = True
-
-	sshcli = SSHClientConnection([credential1, credential2], target, settings)
-	_, err = await sshcli.connect()
-	if err is not None:
-		raise err
-	print('Connect Done!')
-	#await sshcli.open_channel('shell')
-	#await sshcli.portforward_dynamic(8080)
-	#await sshcli.portforward_local('google.com', 80, '', 8080)
-	stdin, stdout, stderr = await sshcli.get_shell()
-	x1 = asyncio.create_task(reader(stdout))
-	x2 = asyncio.create_task(reader(stderr))
-	ui = await get_steam_reader(sys.stdin)
-	while True:
-		data = await ui.readline()
-		print(data)
-		await stdin.put(data)
-
-def main():
-	asyncio.run(amain())
-
-if __name__ == '__main__':
-	main()

@@ -3,9 +3,9 @@ from asysocks.unicomm.common.packetizers import Packetizer
 import os
 
 class SSHPacketizer(Packetizer):
-	def __init__(self, buffer_size = 65535):
+	def __init__(self, buffer_size = 65535, init_buffer = b''):
 		Packetizer.__init__(self, buffer_size)
-		self.in_buffer = b''
+		self.in_buffer = init_buffer
 		self.__total_size = -1
 		self.is_encrypted = False
 

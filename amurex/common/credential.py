@@ -2,7 +2,7 @@ from asyauth.common.constants import asyauthProtocol, asyauthSecret, asyauthSubP
 from asyauth.common.credentials import UniCredential
 from amurex.crypto.keys import SSHKeyAlgo
 
-class SSHCredentialPassword:
+class SSHCredentialPassword(UniCredential):
     def __init__(self, username, password, domain = None):
         UniCredential.__init__(
 			self, 
@@ -13,7 +13,7 @@ class SSHCredentialPassword:
 			protocol = asyauthProtocol.PLAIN,
 			subprotocol = asyauthSubProtocol.NATIVE)
 
-class SSHCredentialPrivKey:
+class SSHCredentialPrivKey(UniCredential):
     def __init__(self, username, privkey, password, domain = None):
         try:
             with open(privkey, 'rb') as f:
