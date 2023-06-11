@@ -349,6 +349,19 @@ class SFTPFile:
 	def __str__(self):
 		return '<SFTPFile path=%s mode=%s>' % (self.path, self.mode)
 	
+	def to_uni_dict(self):
+		return {
+			'type': 'file',
+			'name' : self.path.split('/')[-1],
+			'size' : self.attrs.size,
+			'creationtime' : self.attrs.atime_windows,
+			'lastaccesstime' : self.attrs.atime_windows,
+			'lastwritetime' : self.attrs.mtime_windows,
+			'changetime' : self.attrs.mtime_windows,
+			'allocationsize' : self.attrs.size,
+			'attributes' : self.attrs.to_dict(),
+		}
+		
 	async def close(self):
 		"""Closes the file."""
 		if self.__session is None:
@@ -527,6 +540,19 @@ class SFTPDirectory:
 	
 	def __str__(self):
 		return '<SFTPDirectory path=%s>' % self.path
+	
+	def to_uni_dict(self):
+		return {
+			'type': 'dir',
+			'name' : self.fullpath.split('/')[-1],
+			'size' : self.attrs.size,
+			'creationtime' : self.attrs.atime_windows,
+			'lastaccesstime' : self.attrs.atime_windows,
+			'lastwritetime' : self.attrs.mtime_windows,
+			'changetime' : self.attrs.mtime_windows,
+			'allocationsize' : self.attrs.size,
+			'attributes' : self.attrs.to_dict(),
+		}
 	
 	async def open(self, session:SSHSFTPSession):
 		"""Opens the directory for listing."""

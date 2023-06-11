@@ -1,13 +1,22 @@
 
 import io
-import os
 import enum
+import datetime
 from typing import List, Tuple, Dict
 
 # https://datatracker.ietf.org/doc/html/draft-ietf-secsh-filexfer-02
 # http://cvsweb.openbsd.org/cgi-bin/cvsweb/~checkout~/src/usr.bin/ssh/PROTOCOL
 # https://datatracker.ietf.org/doc/html/draft-ietf-secsh-filexfer-02
 
+AMUREX_WINDOWS_EPOCH = datetime.datetime(1601, 1, 1)
+AMUREX_UNIX_EPOCH = datetime.datetime(1970, 1, 1)
+AMUREX_EPOCH_DIFF = (AMUREX_UNIX_EPOCH - AMUREX_WINDOWS_EPOCH).total_seconds() * 10**7
+
+def unix_time_to_windows_filetime(unix_time):
+	if unix_time is None:
+		return AMUREX_WINDOWS_EPOCH
+	windows_filetime = unix_time * 10**7 + AMUREX_EPOCH_DIFF
+	return windows_filetime
 
 class SSH_FXP(enum.Enum):
 	INIT = 1
@@ -130,6 +139,14 @@ class ATTRS:
 	@property
 	def is_link(self):
 		return self.ftype == 0o12
+	
+	@property
+	def mtime_windows(self):
+		return unix_time_to_windows_filetime(self.mtime)
+	
+	@property
+	def atime_windows(self):
+		return unix_time_to_windows_filetime(self.atime)
 	
 	@staticmethod
 	def from_bytes(data):
