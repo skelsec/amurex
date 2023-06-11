@@ -363,7 +363,6 @@ class SFTPFile:
 	
 	async def __read(self, offset:int, length:int):
 		"""Internal read function."""
-		print('READ: %s %s' % (offset, length))
 		fut = await self.__session.send_message(SSH_FXP_READ(self.handle, offset, length))
 		packet, err = await fut
 		if err is not None:
