@@ -14,7 +14,7 @@ class SSHCredentialPassword(UniCredential):
 			subprotocol = asyauthSubProtocol.NATIVE)
 
 class SSHCredentialPrivKey(UniCredential):
-    def __init__(self, username, privkey, password, domain = None):
+    def __init__(self, username, privkey, passphrase, domain = None):
         try:
             with open(privkey, 'rb') as f:
                 privkey = f.read()
@@ -29,7 +29,7 @@ class SSHCredentialPrivKey(UniCredential):
 			stype = asyauthSecret.SSHPRIVKEY,
 			protocol = asyauthProtocol.PLAIN,
 			subprotocol = asyauthSubProtocol.NATIVE)
-        self.privkeypass = password
+        self.privkeypass = passphrase
 
     def build_context(self):
-        return SSHKeyAlgo.load_privkey_file_bytes(self.secret, password=self.privkeypass)
+        return SSHKeyAlgo.load_privkey_file_bytes(self.secret, passphrase=self.privkeypass)

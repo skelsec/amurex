@@ -114,8 +114,7 @@ class SSHPacketizer(Packetizer):
 
 			yield packet+macdata
 			
-			
-
+	
 	async def data_in(self, data):
 		if data is not None:
 			self.in_buffer += data

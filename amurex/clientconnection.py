@@ -21,12 +21,6 @@ from amurex.crypto.mac import AMUREX_MAC_ALGORITHMS
 from amurex.crypto.encryption import AMUREX_ENCRYPTION_ALGORITHMS
 from amurex.crypto.keys import AMUREX_HOST_KEY_ALGORITHMS
 from amurex.channels import SSHChannel
-from amurex.channels.ptysession import SSHPTYSession
-from amurex.channels.shellsession import SSHShellSession
-from amurex.channels.execsession import SSHExecSession
-from amurex.channels.pflocal import SSHLocalPortForward
-from amurex.extras.socks import SSHPortfowardDynamicSOCKS
-from amurex.extras.pfsocket import SSHPortfowardLocalSocket
 from amurex.common.settings import SSHClientSettings
 
 
@@ -55,6 +49,7 @@ class SSHClientConnection:
 		self.__compression_server_to_client = None
 		self.__language_client_to_server = None
 		self.__language_server_to_client = None
+		self.__server_kex_packet = None #for security tests
 
 		self.client_to_server_init_IV = None
 		self.server_to_client_init_IV = None
@@ -68,16 +63,19 @@ class SSHClientConnection:
 			self.credentials = [self.credentials]
 	
 	async def close(self):
-		if self.__incoming_task is not None:
-			self.__incoming_task.cancel()
 		for channel in self.__channels:
 			await self.__channels[channel].close()
+		if self.__connection is not None:
+			await self.__connection.close()
+		if self.__incoming_task is not None:
+			self.__incoming_task.cancel()
 
 	async def __handle_in(self):
 		try:
 			async for payload in self.__connection.read():
+				if payload is None:
+					break
 				msgtype, smsg = parse_ssh_payload(payload, None)
-				#print('INCOMING msgtype: %s' % msgtype)
 				if msgtype == SSHMessageNumber.SSH_MSG_GLOBAL_REQUEST:
 					_, err = await self.__process_global_request(smsg)
 					if err is not None:
@@ -91,11 +89,13 @@ class SSHClientConnection:
 							SSHMessageNumber.SSH_MSG_CHANNEL_EOF,
 							SSHMessageNumber.SSH_MSG_CHANNEL_CLOSE,
 							SSHMessageNumber.SSH_MSG_CHANNEL_OPEN,
+							SSHMessageNumber.SSH_MSG_CHANNEL_SUCCESS,
+							SSHMessageNumber.SSH_MSG_CHANNEL_FAILURE,
 						]:
 					if smsg.recipient not in self.__channels:
 						print('Missing recipientid "%s"' % smsg.recipient)
 						continue
-					await self.__channels[smsg.recipient].msg_in(msgtype, smsg)
+					asyncio.create_task(self.__channels[smsg.recipient].msg_in(msgtype, smsg))
 				elif msgtype == SSHMessageNumber.SSH_MSG_IGNORE:
 					continue
 				elif msgtype == SSHMessageNumber.SSH_MSG_DEBUG:
@@ -137,7 +137,7 @@ class SSHClientConnection:
 			logger.debug('Key exchange OK')
 
 			if noauth is True:
-				return True, None
+				return self.__server_kex_packet, None
 			
 			logger.debug('Authenticating to server')
 			_, err = await self.authenticate()
@@ -173,7 +173,7 @@ class SSHClientConnection:
 			result += self.__kex_algo.hashobj(K + H + result).digest()
 		return result[:keysize]
 
-	async def open_channel_obj(self, channelobj):
+	async def open_channel_obj(self, channelobj:SSHChannel):
 		try:
 			recipientid = self.__channelid_ctr
 			self.__channelid_ctr += 1
@@ -181,66 +181,12 @@ class SSHClientConnection:
 			channelobj.connection = self.__connection
 			self.__channels[recipientid] = channelobj
 			await self.__connection.write(channelobj.get_channel_open())
-
+			await channelobj.channel_setup_completed_evt.wait()
 			return True, None
 		except Exception as e:
 			traceback.print_exc()
 			return False, e
-
-	async def open_channel(self, channel_type):
-		try:
-			if channel_type == 'pty':
-				print('pty')
-				await self.open_channel_obj(SSHPTYSession(None))
-			elif channel_type == 'shell':
-				shell = SSHShellSession(None)
-				await self.open_channel_obj(shell)
-				return shell
-			return True, None
-		except Exception as e:
-			traceback.print_exc()
-			return False, e
-
-	async def get_shell(self):
-		shell = SSHShellSession(None)
-		await self.open_channel_obj(shell)
-		return shell.stdin, shell.stdout, shell.stderr
-
-	async def execute_command(self, cmd):
-		execshell = SSHExecSession(None, cmd)
-		await self.open_channel_obj(execshell)
-		return None, execshell.stdout, execshell.stderr
-
-	async def portforward_local_queue(self, raddr:str, rport:int, laddr:str="", lport:int = 0):
-		try:
-			pfo = SSHLocalPortForward(None, raddr, rport, laddr, lport)
-			await self.open_channel_obj(pfo)
-			_, err = await pfo.setup_queue()
-			if err is not None:
-				raise err
-			return pfo, None
-		except Exception as e:
-			traceback.print_exc()
-			return False, e
 	
-	async def portforward_local(self, raddr:str, rport:int, laddr:str="", lport:int = 0):
-		try:
-			dfo = SSHPortfowardLocalSocket(raddr, rport, laddr, lport, self)
-			await dfo.run()
-		except Exception as e:
-			traceback.print_exc()
-			return False, e
-
-	
-	async def portforward_dynamic(self, lport:int, laddr:str=''):
-		try:
-			dfo = SSHPortfowardDynamicSOCKS(laddr, lport, self)
-			await dfo.run()
-		except Exception as e:
-			traceback.print_exc()
-			return False, e
-
-
 	async def key_exchange(self):
 		try:
 			client_kex = SSH_MSG_KEXINIT(
@@ -260,6 +206,7 @@ class SSHClientConnection:
 			logger.debug('Reading server KEX init')
 			server_kex_data = await self.__connection.read_one()
 			server_kex = SSH_MSG_KEXINIT.from_bytes(server_kex_data)
+			self.__server_kex_packet = server_kex
 			logger.debug('Server KEX init message ok')
 			for algo in client_kex.kex_algorithms:
 				if algo in server_kex.kex_algorithms:
@@ -498,6 +445,7 @@ class SSHClientConnection:
 			await self.__connection.write(SSH_MSG_USERAUTH_REQUEST_PASSWORD(username, 'ssh-connection', password).to_bytes())
 			srvmsg = await self.__connection.read_one()
 			msgtype, smsg = parse_ssh_payload(srvmsg, None)
+			print(msgtype)
 			if msgtype == SSHMessageNumber.SSH_MSG_USERAUTH_SUCCESS:
 				logger.debug('Plaintext authentication success')
 				return True, None

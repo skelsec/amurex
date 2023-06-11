@@ -219,6 +219,24 @@ class SSH_MSG_KEXINIT:
 		
 		return t
 
+	def to_dict(self):
+		return {
+			'packet_type' : self.packet_type.name,
+			'cookie' : self.cookie.hex(),
+			'kex_algorithms' : self.kex_algorithms,
+			'server_host_key_algorithms' : self.server_host_key_algorithms,
+			'encryption_algorithms_client_to_server' : self.encryption_algorithms_client_to_server,
+			'encryption_algorithms_server_to_client' : self.encryption_algorithms_server_to_client,
+			'mac_algorithms_client_to_server' : self.mac_algorithms_client_to_server,
+			'mac_algorithms_server_to_client' : self.mac_algorithms_server_to_client,
+			'compression_algorithms_client_to_server' : self.compression_algorithms_client_to_server,
+			'compression_algorithms_server_to_client' : self.compression_algorithms_server_to_client,
+			'languages_client_to_server' : self.languages_client_to_server,
+			'languages_server_to_client' : self.languages_server_to_client,
+			'first_kex_packet_follows' : self.first_kex_packet_follows,
+			'reserved' : self.reserved,
+		}
+
 class SSH2_MSG_KEXDH_INIT:
 	def __init__(self, e):
 		self.packet_type = SSHMessageNumber.SSH2_MSG_KEXDH_INIT
@@ -839,7 +857,8 @@ class SSH_MSG_CHANNEL_REQUEST:
 		data += SSHString.to_bytes(self.request)
 		data += b'\x01' if self.wantreply is True else b'\x00'
 		if self.data is not None and len(self.data) > 0:
-			data += SSHString.to_bytes(self.data)
+			#data += SSHString.to_bytes(self.data)
+			data += self.data
 		return data
 
 	def __str__(self):
@@ -937,7 +956,6 @@ class SSH_MSG_CHANNEL_FAILURE:
 	def __init__(self, recipient):
 		self.packet_type = SSHMessageNumber.SSH_MSG_CHANNEL_FAILURE
 		self.recipient:int = recipient
-
 
 	@staticmethod
 	def from_bytes(data):
