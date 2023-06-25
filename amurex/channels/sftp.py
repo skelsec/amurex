@@ -10,7 +10,7 @@ from amurex.protocol.sftp import SSH_FXF, SSH_FX, SSH_FXP, SFTP_PACKET_TYPE_LOOK
 	SFTP_EXPECTED_RESPONSES, PY_OPEN_TO_SSH_FXF, ATTRS, SSH_FXP_OPEN, SSH_FXP_READ, \
 	SSH_FXP_WRITE, SSH_FXP_CLOSE, SSH_FXP_LSTAT, SSH_FXP_STAT, SSH_FXP_FSTAT,\
 	SSH_FXP_MKDIR, SSH_FXP_RMDIR, SSH_FXP_REALPATH, SSH_FXP_SETSTAT, SSH_FXP_READLINK,\
-	SSH_FXP_SYMLINK
+	SSH_FXP_SYMLINK, SSH_FXP_REMOVE
 
 async def resolve_response(fut: asyncio.Future, expected_packet_type:SSH_FXP):
 	try:
@@ -217,6 +217,18 @@ class SSHSFTPSession(SSHChannel):
 			return SFTPFile(path, smode, attrs= attrs, handle = packet.handle, session = self), None
 		except Exception as e:
 			return None, e
+
+	async def unlink(self, path:str):
+		"""Deletes a file"""
+		try:
+			fut = await self.send_message(SSH_FXP_REMOVE(path))
+			packet, err = await fut
+			if err is not None:
+				raise err
+			
+			return True, None
+		except Exception as e:
+			return None, e
 		
 	async def stat(self, path:str):
 		"""Gets the stats of a file or directory"""
@@ -295,6 +307,24 @@ class SSHSFTPSession(SSHChannel):
 			return True, None
 		except Exception as e:
 			return False, e
+	
+	async def download_chunked(self, srcpath:str):
+		"""Downloads a file from the remote server to the local machine"""
+		try:
+			sfile, err = await self.open(srcpath, 'r')
+			if err is not None:
+				raise err
+			
+			async for data, err in sfile.read_chunked():
+				if err is not None:
+					raise err
+				
+				yield data
+		except Exception as e:
+			raise e
+		finally:
+			if sfile is not None:
+				await sfile.close()
 	
 	async def upload(self, srcpath:str, dstpath:str):
 		"""Uploads a file from the local machine to the remote server"""
@@ -544,7 +574,7 @@ class SFTPDirectory:
 	def to_uni_dict(self):
 		return {
 			'type': 'dir',
-			'name' : self.fullpath.split('/')[-1],
+			'name' : str(self.fullpath).split('/')[-1],
 			'size' : self.attrs.size,
 			'creationtime' : self.attrs.atime_windows,
 			'lastaccesstime' : self.attrs.atime_windows,
@@ -583,7 +613,8 @@ class SFTPDirectory:
 		if self.handle is None:
 			return
 		
-		await self.__session.send_message(SSH_FXP_CLOSE(self.handle))
+		fut = await self.__session.send_message(SSH_FXP_CLOSE(self.handle))
+		packet, err = await fut
 		self.handle = None
 		self.__session = None
 	
@@ -632,7 +663,7 @@ class SFTPDirectory:
 			if err is not None:
 				yield entry, err
 				break
-			if entry.attrs.is_dir is True:
+			if entry.attrs.is_dir is True and depth > 1:
 				_, err = await entry.open(self.__session)
 				if err is not None:
 					yield entry, err

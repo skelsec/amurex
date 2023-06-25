@@ -208,6 +208,35 @@ class ATTRS:
 				t += len(edata).to_bytes(4, byteorder='big', signed = False)
 				t += edata
 		return t
+	
+	def to_dict(self):
+		t = {}
+		t['flags'] = self.flags
+		t['size'] = None
+		if self.flags & SSH_FILEXFER_ATTR.SIZE:
+			t['size'] = self.size
+		
+		t['uid'] = None
+		t['gid'] = None
+		if self.flags & SSH_FILEXFER_ATTR.UIDGID:
+			t['uid'] = self.uid
+			t['gid'] = self.gid
+		
+		t['permissions'] = None
+		if self.flags & SSH_FILEXFER_ATTR.PERMISSIONS:
+			t['permissions'] = self.permissions
+		
+		t['atime'] = None
+		t['mtime'] = None
+		if self.flags & SSH_FILEXFER_ATTR.ACMODTIME:
+			t['atime'] = self.atime
+			t['mtime'] = self.mtime
+		
+		t['extended'] = []
+		if self.flags & SSH_FILEXFER_ATTR.EXTENDED:
+			for etype, edata in self.extended:
+				t['extended'].append((etype, edata.hex()))
+		return t
 
 	def __str__(self):
 		t = 'ATTRS:\r\n'

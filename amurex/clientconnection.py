@@ -108,7 +108,7 @@ class SSHClientConnection:
 				else:
 					logger.debug('Unknown message type recieved: %s' % msgtype)
 
-			print('END?')
+			#print('END?')
 		except Exception as e:
 			traceback.print_exc()
 		finally:
@@ -445,7 +445,6 @@ class SSHClientConnection:
 			await self.__connection.write(SSH_MSG_USERAUTH_REQUEST_PASSWORD(username, 'ssh-connection', password).to_bytes())
 			srvmsg = await self.__connection.read_one()
 			msgtype, smsg = parse_ssh_payload(srvmsg, None)
-			print(msgtype)
 			if msgtype == SSHMessageNumber.SSH_MSG_USERAUTH_SUCCESS:
 				logger.debug('Plaintext authentication success')
 				return True, None
