@@ -1,7 +1,7 @@
 
-__version__ = "0.0.3"
+__version__ = "0.0.4"
 __banner__ = \
 """
-# octopwn %s 
+# amurex %s 
 # Author: Tamas Jos @skelsec (info@skelsecprojects.com)
 """ % __version__

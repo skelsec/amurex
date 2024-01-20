@@ -38,8 +38,6 @@ class SSHConnectionFactory:
 		privkey = None
 		if 'privkey' in query:
 			privkey = query['privkey'][0]
-		else:
-			raise Exception('Private key must be provided!')
 
 
 		schemes = url_e.scheme.upper().split('+')		
@@ -57,6 +55,7 @@ class SSHConnectionFactory:
 		cred = self.get_credential()
 		target = self.get_target()
 		settings = SSHClientSettings()
+		settings.skip_hostkey_verification = True
 		
 		return SSHClientConnection([cred], target, settings)
 	
