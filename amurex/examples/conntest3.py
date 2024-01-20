@@ -20,7 +20,7 @@ async def get_steam_reader(pipe) -> asyncio.StreamReader:
 
 async def amain():
 	try:
-		client, err = await SSHClient.connect(
+		client, err = await SSHClient.from_params(
 			'127.0.0.1', 
 			username = 'webdev', 
 			password = 'webdev', 

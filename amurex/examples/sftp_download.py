@@ -4,7 +4,7 @@ from amurex.client import SSHClient
 
 async def amain():
 	try:
-		client, err = await SSHClient.connect(
+		client, err = await SSHClient.from_params(
 			'127.0.0.1', 
 			username = 'webdev', 
 			password = 'webdev', 
@@ -13,7 +13,7 @@ async def amain():
 		if err is not None:
 			raise err
 		
-		async with client:			
+		async with client:
 			sftp, err = await client.get_sftp()
 			if err is not None:
 				raise err

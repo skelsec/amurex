@@ -30,6 +30,7 @@ class SSHClientConnection:
 		self.credentials:List[UniCredential] = credentials
 		self.settings = settings
 		self.__connection = None
+		self.connected_evt = asyncio.Event()
 		self.__incoming_task = None
 
 		self.__channels:Dict[int,SSHChannel] = {}
@@ -119,6 +120,7 @@ class SSHClientConnection:
 			logger.debug('Connecting to server')
 			client = UniClient(self.target, Packetizer())
 			self.__connection = await client.connect()
+			
 			logger.debug('Connection OK')
 
 			logger.debug('Banner exchange')
@@ -146,6 +148,7 @@ class SSHClientConnection:
 			logger.debug('Authentication OK')
 
 			self.__incoming_task = asyncio.create_task(self.__handle_in())
+			self.connected_evt.set()
 
 			logger.debug('SSH connection OK')
 			return True, None

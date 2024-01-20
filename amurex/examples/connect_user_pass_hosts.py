@@ -2,7 +2,7 @@ import asyncio
 from amurex.client import SSHClient
 
 async def amain():
-	client, err = await SSHClient.connect(
+	client, err = await SSHClient.from_params(
 		'127.0.0.1', 
 	    username='webdev', 
 	    password='webdev', 

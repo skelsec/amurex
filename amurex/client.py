@@ -20,7 +20,7 @@ class SSHClient:
 		self.connection = connection
 		
 	@staticmethod
-	async def connect(host:str, username:str=None, password:str=None, domain:str = None, private_key:str=None, private_key_passphrase:str=None, known_hosts:str=None, verify:bool = True, timeout:int=10, proxies:List=None, port:int=22):
+	async def from_params(host:str, username:str=None, password:str=None, domain:str = None, private_key:str=None, private_key_passphrase:str=None, known_hosts:str=None, verify:bool = True, timeout:int=10, proxies:List=None, port:int=22):
 		"""Connects to a remote SSH server and returns a new SSHClient instance"""
 		try:
 			target = UniTarget(
@@ -44,13 +44,22 @@ class SSHClient:
 			settings.skip_hostkey_verification = not verify
 
 			connection = SSHClientConnection([credential], target, settings)
-			_, err = await connection.connect()
+			client = SSHClient(connection)
+			_, err = await client.connect()
 			if err is not None:
 				raise err
-			client = SSHClient(connection)
 			return client, None
 		except Exception as e:
 			return None, e
+	
+	async def connect(self):
+		try:
+			_, err = await self.connection.connect()
+			if err is not None:
+				raise err
+			return True, None
+		except Exception as e:
+			return False, e
 	
 	async def __aenter__(self):
 		return self
