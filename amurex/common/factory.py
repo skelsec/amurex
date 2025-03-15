@@ -50,22 +50,28 @@ class SSHConnectionFactory:
 
 		return SSHConnectionFactory(credential, target)
 	
-	def get_connection(self):
-		"""Creates a new SMBConnection object"""
+	def get_connection(self, settings:SSHClientSettings = None):
+		"""Creates a new SSHConnection object"""
+		if settings is None:
+			settings = SSHClientSettings()
 		cred = self.get_credential()
 		target = self.get_target()
-		settings = SSHClientSettings()
-		settings.skip_hostkey_verification = True
 		
 		return SSHClientConnection([cred], target, settings)
 	
-	def get_client(self):
-		connection = self.get_connection()
+	def get_client(self, settings:SSHClientSettings = None):
+		if settings is None:
+			settings = SSHClientSettings()
+		connection = self.get_connection(settings)
 		return SSHClient(connection)
 	
-	def create_connection_newtarget(self, ip_or_hostname):
+	def create_connection_newtarget(self, ip_or_hostname, settings:SSHClientSettings = None):
+		if settings is None:
+			settings = SSHClientSettings()
+		cred = self.get_credential()
 		target = self.get_target()
-		target.get_newtarget(ip_or_hostname)
+		target = target.get_newtarget(ip_or_hostname, port = self.target.port if self.target.port != 0 else 22)
+		return SSHClientConnection([cred], target, settings)
 
 	def get_proxies(self):
 		"""Returns a copy of proxies from the target object"""

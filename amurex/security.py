@@ -52,9 +52,7 @@ async def get_ssh_auth_methods(host:str, port=22, username:str = None, timeout:i
                 timeout=timeout,
                 proxies=proxies
             )
-        settings = SSHClientSettings()
-        settings.skip_hostkey_verification = True
-
+        
         settings = SSHClientSettings()
         settings.skip_hostkey_verification = True
         connection = SSHClientConnection(None, targetobj, settings)

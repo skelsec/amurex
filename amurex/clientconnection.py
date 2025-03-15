@@ -62,6 +62,12 @@ class SSHClientConnection:
 
 		if isinstance(self.credentials, list) is False:
 			self.credentials = [self.credentials]
+
+	async def __aenter__(self):
+		return self
+	
+	async def __aexit__(self, exc_type, exc, traceback):
+		await self.close()
 	
 	async def close(self):
 		for channel in self.__channels:
@@ -114,6 +120,9 @@ class SSHClientConnection:
 			traceback.print_exc()
 		finally:
 			await self.close()
+
+	def get_server_banner(self):
+		return self.__server_banner
 
 	async def connect(self, noauth = False):
 		try:

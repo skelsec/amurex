@@ -292,6 +292,7 @@ class SSHSFTPSession(SSHChannel):
 		
 	async def download(self, srcpath:str, dstpath:str):
 		"""Downloads a file from the remote server to the local machine"""
+		sfile = None
 		try:
 			sfile, err = await self.open(srcpath, 'r')
 			if err is not None:
@@ -307,6 +308,9 @@ class SSHSFTPSession(SSHChannel):
 			return True, None
 		except Exception as e:
 			return False, e
+		finally:
+			if sfile is not None:
+				await sfile.close()
 	
 	async def download_chunked(self, srcpath:str):
 		"""Downloads a file from the remote server to the local machine"""
@@ -351,7 +355,28 @@ class SSHSFTPSession(SSHChannel):
 		finally:
 			if sfile is not None:
 				await sfile.close()
-	
+
+	async def enum_all(self, path:str = None, depth:int=3, filter_cb=None):
+		"""Enumerates all files and directories in a given path"""
+		try:
+			if path is None:
+				path, err = await self.cwd()
+				if err is not None:
+					raise err
+			
+			dirobj, err = await self.opendir(path)
+			if err is not None:
+				raise err
+
+			async for entry, err in dirobj.ls_obj_r(depth = depth, filter_cb=filter_cb):
+				if err is not None:
+					yield entry, err
+					continue
+				yield entry, None
+		except Exception as e:
+			raise e
+		finally:
+			await dirobj.close()
 	#async def rename_posix(self, oldpath:str, newpath:str):
 	#	"""Renames a file or directory"""
 	#	try:
@@ -383,6 +408,7 @@ class SFTPFile:
 		return {
 			'type': 'file',
 			'name' : self.path.split('/')[-1],
+			'fullpath' : self.path,
 			'size' : self.attrs.size,
 			'creationtime' : self.attrs.atime_windows,
 			'lastaccesstime' : self.attrs.atime_windows,
@@ -575,6 +601,7 @@ class SFTPDirectory:
 		return {
 			'type': 'dir',
 			'name' : str(self.fullpath).split('/')[-1],
+			'fullpath' : str(self.fullpath),
 			'size' : self.attrs.size,
 			'creationtime' : self.attrs.atime_windows,
 			'lastaccesstime' : self.attrs.atime_windows,
@@ -655,7 +682,7 @@ class SFTPDirectory:
 			traceback.print_exc()
 			yield None, e
 
-	async def ls_obj_r(self, depth:int = 3):
+	async def ls_obj_r(self, depth:int = 3, filter_cb=None):
 		"""Recursively list the directory contents."""
 		if depth == 0:
 			return
@@ -663,12 +690,16 @@ class SFTPDirectory:
 			if err is not None:
 				yield entry, err
 				break
+			if filter_cb is not None:
+				tograb = await filter_cb(entry)
+				if tograb is False:
+					continue
 			if entry.attrs.is_dir is True and depth > 1:
 				_, err = await entry.open(self.__session)
 				if err is not None:
 					yield entry, err
 					continue
-				async for subentry, err in entry.ls_obj_r(depth = depth-1):
+				async for subentry, err in entry.ls_obj_r(depth = depth-1, filter_cb=filter_cb):
 					yield subentry, err
 				await entry.close()
 			else:
