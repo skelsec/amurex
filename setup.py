@@ -32,9 +32,9 @@ setup(
 	),
 	install_requires=[
         'cryptography>=2.5',
-		'unicrypto>=0.0.9',
-		'asysocks>=0.2.2',
-		'asyauth>=0.0.3',
+		'unicrypto>=0.0.12',
+		'asysocks>=0.2.18',
+		'asyauth>=0.0.23',
 		'prompt-toolkit>=3.0.20',
 	],
 	#entry_points={
