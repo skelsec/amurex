@@ -42,7 +42,14 @@ class SSHLocalPortForward(SSHChannel):
 
 	async def channel_init(self, *args, **kwargs):
 		try:
-			await asyncio.wait([self.channel_opened_evt.wait(), self.channel_closed_evt.wait()], return_when=asyncio.FIRST_COMPLETED)
+			opened_task = asyncio.create_task(self.channel_opened_evt.wait())
+			closed_task = asyncio.create_task(self.channel_closed_evt.wait())
+			_, pending = await asyncio.wait(
+				[opened_task, closed_task],
+				return_when=asyncio.FIRST_COMPLETED,
+			)
+			for task in pending:
+				task.cancel()
 			if self.channel_closed_evt.is_set():
 				return None, Exception('Connection error')
 			self.iq_q = asyncio.Queue()
