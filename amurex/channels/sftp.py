@@ -10,7 +10,16 @@ from amurex.protocol.sftp import SSH_FXF, SSH_FX, SSH_FXP, SFTP_PACKET_TYPE_LOOK
 	SFTP_EXPECTED_RESPONSES, PY_OPEN_TO_SSH_FXF, ATTRS, SSH_FXP_OPEN, SSH_FXP_READ, \
 	SSH_FXP_WRITE, SSH_FXP_CLOSE, SSH_FXP_LSTAT, SSH_FXP_STAT, SSH_FXP_FSTAT,\
 	SSH_FXP_MKDIR, SSH_FXP_RMDIR, SSH_FXP_REALPATH, SSH_FXP_SETSTAT, SSH_FXP_READLINK,\
-	SSH_FXP_SYMLINK, SSH_FXP_REMOVE
+	SSH_FXP_SYMLINK, SSH_FXP_REMOVE, SSH_FXP_DATA, SSH_FXP_NAME
+
+class _PendingRequest:
+	__slots__ = ('future', 'command', 'data_parts', 'entries')
+
+	def __init__(self, future: asyncio.Future, command: SSH_FXP):
+		self.future = future
+		self.command = command
+		self.data_parts = []
+		self.entries = []
 
 async def resolve_response(fut: asyncio.Future, expected_packet_type:SSH_FXP):
 	try:
@@ -35,8 +44,9 @@ class SSHSFTPSession(SSHChannel):
 		self.server_extensions = {}
 		self.__buffer = b''
 		self.__handles = {}
-		self.__outstanding_requests:Dict[int, asyncio.Future] = {}
+		self.__outstanding_requests:Dict[int, _PendingRequest] = {}
 		self.__next_pid = 0
+		self.__data_lock = asyncio.Lock()
 	
 	async def __aenter__(self):
 		return self
@@ -54,9 +64,26 @@ class SSHSFTPSession(SSHChannel):
 		
 		return self.__next_pid
 
+	def __complete_request(self, pid:int, packet):
+		pending = self.__outstanding_requests.pop(pid, None)
+		if pending is None:
+			return
+		if pending.future.done() is False:
+			pending.future.set_result(packet)
+
+	def __flush_pending_requests(self):
+		for pid in list(self.__outstanding_requests):
+			pending = self.__outstanding_requests[pid]
+			if pending.command == SSH_FXP.READ and pending.data_parts:
+				self.__complete_request(pid, SSH_FXP_DATA(b''.join(pending.data_parts), pid=pid))
+			elif pending.command == SSH_FXP.READDIR and pending.entries:
+				self.__complete_request(pid, SSH_FXP_NAME(pending.entries, pid=pid))
+
 	async def channel_close(self, server_side:bool=False):
-		for pid in self.__outstanding_requests:
-			self.__outstanding_requests[pid].set_result(Exception('Channel is closed!'))
+		for pending in self.__outstanding_requests.values():
+			if pending.future.done() is False:
+				pending.future.set_exception(Exception('Channel is closed!'))
+		self.__outstanding_requests.clear()
 		if server_side is False:
 			for handle in self.__handles:
 				fut = await self.send_message(SSH_FXP_CLOSE(handle))
@@ -78,15 +105,17 @@ class SSHSFTPSession(SSHChannel):
 			return None, e
 	
 	async def channel_data_in(self, datatype:int, data:bytes):
-		self.__buffer += data
-		while len(self.__buffer) > 4:
-			packetlen = int.from_bytes(self.__buffer[:4], byteorder='big', signed=False) + 4
-			if len(self.__buffer) >= packetlen:
-				packet = self.__buffer[:packetlen]
-				self.__buffer = self.__buffer[packetlen:]
-				await self.process_packet(packet)
-			else:
-				break
+		async with self.__data_lock:
+			self.__buffer += data
+			while len(self.__buffer) > 4:
+				packetlen = int.from_bytes(self.__buffer[:4], byteorder='big', signed=False) + 4
+				if len(self.__buffer) >= packetlen:
+					packet = self.__buffer[:packetlen]
+					self.__buffer = self.__buffer[packetlen:]
+					await self.process_packet(packet)
+				else:
+					break
+			self.__flush_pending_requests()
 
 	async def send_message(self, message):
 		try:
@@ -95,7 +124,7 @@ class SSHSFTPSession(SSHChannel):
 			pid = self.get_pid()
 			message.pid = pid
 			fut = asyncio.Future()
-			self.__outstanding_requests[pid] = fut
+			self.__outstanding_requests[pid] = _PendingRequest(fut, message.command)
 			await self.channel_data_out(message.to_bytes())
 			return resolve_response(fut, SFTP_EXPECTED_RESPONSES[message.command])
 		except Exception as e:
@@ -110,16 +139,39 @@ class SSHSFTPSession(SSHChannel):
 			self.server_extensions = packet.extensions
 			self.init_complete_evt.set()
 			return
-		if packet.pid in self.__outstanding_requests:
-			if packet_type == SSH_FXP.HANDLE:
-				self.__handles[packet.handle] = packet.handle
-			elif packet_type == SSH_FXP.CLOSE:
-				del self.__handles[packet.handle]
-			self.__outstanding_requests[packet.pid].set_result(packet)
-			del self.__outstanding_requests[packet.pid]
-			return
-		else:
+		pending = self.__outstanding_requests.get(packet.pid)
+		if pending is None:
 			print('SFTP UNHANDLED PID: %s PACKET: %s' % (packet.pid, packet))
+			return
+
+		if pending.command == SSH_FXP.READ:
+			if packet_type == SSH_FXP.DATA:
+				pending.data_parts.append(packet.data)
+				return
+			if packet_type == SSH_FXP.STATUS:
+				if packet.error_code in (SSH_FX.EOF, SSH_FX.OK):
+					data = b''.join(pending.data_parts)
+					self.__complete_request(packet.pid, SSH_FXP_DATA(data, pid=packet.pid))
+				else:
+					self.__complete_request(packet.pid, packet)
+				return
+
+		if pending.command == SSH_FXP.READDIR:
+			if packet_type == SSH_FXP.NAME:
+				pending.entries.extend(packet.entries)
+				return
+			if packet_type == SSH_FXP.STATUS:
+				if packet.error_code in (SSH_FX.EOF, SSH_FX.OK) and pending.entries:
+					self.__complete_request(packet.pid, SSH_FXP_NAME(pending.entries, pid=packet.pid))
+				else:
+					self.__complete_request(packet.pid, packet)
+				return
+
+		if packet_type == SSH_FXP.HANDLE:
+			self.__handles[packet.handle] = packet.handle
+		elif packet_type == SSH_FXP.CLOSE:
+			del self.__handles[packet.handle]
+		self.__complete_request(packet.pid, packet)
 		return
 	
 	async def opendir(self, path):
