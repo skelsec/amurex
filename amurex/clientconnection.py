@@ -357,6 +357,17 @@ class SSHClientConnection:
 		except Exception as e:
 			return False, e
 
+	async def __read_userauth_response(self):
+		"""Read userauth responses, skipping SSH_MSG_USERAUTH_BANNER messages."""
+		for _ in range(10):
+			srvmsg = await self.__connection.read_one()
+			msgtype, smsg = parse_ssh_payload(srvmsg, None)
+			if msgtype == SSHMessageNumber.SSH_MSG_USERAUTH_BANNER:
+				logger.debug('Received auth banner')
+				continue
+			return msgtype, smsg, srvmsg
+		raise Exception('Too many auth banner messages!')
+
 	async def list_authentication_methods(self):
 		try:
 			result = []
@@ -365,8 +376,7 @@ class SSHClientConnection:
 			msgtype, smsg = parse_ssh_payload(srvmsg, SSHMessageNumber.SSH_MSG_SERVICE_ACCEPT)
 
 			await self.__connection.write(SSH_MSG_USERAUTH_REQUEST('', 'ssh-userauth', 'none').to_bytes())
-			srvmsg = await self.__connection.read_one()			
-			msgtype, smsg = parse_ssh_payload(srvmsg, None)
+			msgtype, smsg, _ = await self.__read_userauth_response()
 
 			if msgtype == SSHMessageNumber.SSH_MSG_USERAUTH_SUCCESS:
 				print('User is not reuired to perform authentication!')
@@ -410,8 +420,7 @@ class SSHClientConnection:
 			).to_bytes()
 			await self.__connection.write(initial_req)
 
-			srvmsg = await self.__connection.read_one()
-			msgtype, smsg = parse_ssh_payload(srvmsg)
+			msgtype, smsg, srvmsg = await self.__read_userauth_response()
 			if msgtype.value != 60:
 				if msgtype == SSHMessageNumber.SSH_MSG_USERAUTH_FAILURE:
 					raise Exception('Pubkey auth failed')
@@ -434,8 +443,7 @@ class SSHClientConnection:
 			authreq = to_sign[len(ssid):] + SSHString.to_bytes(key.sign(to_sign, smsg.keytype))
 
 			await self.__connection.write(authreq)
-			srvmsg = await self.__connection.read_one()
-			msgtype, smsg = parse_ssh_payload(srvmsg)
+			msgtype, smsg, _ = await self.__read_userauth_response()
 			if msgtype == SSHMessageNumber.SSH_MSG_USERAUTH_SUCCESS:
 				return True, None
 			elif msgtype == SSHMessageNumber.SSH_MSG_USERAUTH_FAILURE:
@@ -455,8 +463,7 @@ class SSHClientConnection:
 			srvmsg = await self.__connection.read_one()
 			msgtype, smsg = parse_ssh_payload(srvmsg, SSHMessageNumber.SSH_MSG_SERVICE_ACCEPT)
 			await self.__connection.write(SSH_MSG_USERAUTH_REQUEST_PASSWORD(username, 'ssh-connection', password).to_bytes())
-			srvmsg = await self.__connection.read_one()
-			msgtype, smsg = parse_ssh_payload(srvmsg, None)
+			msgtype, smsg, _ = await self.__read_userauth_response()
 			if msgtype == SSHMessageNumber.SSH_MSG_USERAUTH_SUCCESS:
 				logger.debug('Plaintext authentication success')
 				return True, None

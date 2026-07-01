@@ -170,6 +170,9 @@ class SSHSFTPSession(SSHChannel):
 			if err is not None:
 				raise err
 			
+			if packet.entries is None or len(packet.entries) == 0:
+				return None, Exception('No response from server!')
+			
 			return packet.entries[0][1], None
 		except Exception as e:
 			return None, e
@@ -181,6 +184,9 @@ class SSHSFTPSession(SSHChannel):
 			packet, err = await fut
 			if err is not None:
 				raise err
+			
+			if packet.entries is None or len(packet.entries) == 0:
+				return None, Exception('No response from server!')
 			
 			return packet.entries[0][1], None
 		except Exception as e:
@@ -273,6 +279,9 @@ class SSHSFTPSession(SSHChannel):
 			packet, err = await fut
 			if err is not None:
 				raise err
+			
+			if packet.entries is None or len(packet.entries) == 0:
+				return None, Exception('No response from server!')
 			
 			return packet.entries[0][1], None
 		except Exception as e:
